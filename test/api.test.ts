@@ -1,0 +1,148 @@
+import { test, before } from 'node:test';
+import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
+import { openDb } from '../src/db.ts';
+import { config } from '../src/config.ts';
+import { buildApp } from '../src/app.ts';
+import { MockChannel } from '../src/channels/whatsapp.ts';
+import { hashPassword } from '../src/auth.ts';
+import { ingestInbound, localDow } from '../src/domain.ts';
+
+const db = openDb(':memory:');
+const channel = new MockChannel();
+let app: Awaited<ReturnType<typeof buildApp>>;
+
+const H = { 'x-requested-with': 'cordial' };
+const cookies: Record<string, string> = {};
+
+async function login(email: string) {
+  const res = await app.inject({ method: 'POST', url: '/api/auth/login', headers: H, payload: { email, password: 'senha-forte-1' } });
+  assert.equal(res.statusCode, 200);
+  cookies[email] = `cordial_sid=${res.cookies[0].value}`;
+}
+const call = (email: string, method: any, url: string, payload?: unknown) =>
+  app.inject({ method, url, headers: { ...H, cookie: cookies[email] }, payload: payload as any });
+
+before(async () => {
+  app = await buildApp({ db, channel });
+  const pw = hashPassword('senha-forte-1');
+  const add = (n: string, e: string, r: string) => db.prepare('INSERT INTO users (name,email,password_hash,role) VALUES (?,?,?,?)').run(n, e, pw, r);
+  add('Admin', 'admin@t.com', 'admin'); add('Ana', 'ana@t.com', 'agent'); add('Bia', 'bia@t.com', 'agent');
+  db.prepare("INSERT INTO teams (name) VALUES ('A'),('B')").run();
+  db.prepare('INSERT INTO team_members VALUES (1,2)').run();
+  db.prepare('INSERT INTO team_members VALUES (2,3)').run();
+  db.prepare("INSERT INTO templates (name,language,body) VALUES ('retorno','pt_BR','Olá {{1}}!')").run();
+  for (const e of ['admin@t.com', 'ana@t.com', 'bia@t.com']) await login(e);
+});
+
+test('auth: exige sessão, CSRF header e rejeita senha errada', async () => {
+  assert.equal((await app.inject({ method: 'GET', url: '/api/conversations' })).statusCode, 401);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'a', password: 'b' } })).statusCode, 403);
+  const bad = await app.inject({ method: 'POST', url: '/api/auth/login', headers: H, payload: { email: 'ana@t.com', password: 'errada' } });
+  assert.equal(bad.statusCode, 401);
+});
+
+test('mensagem recebida cria cliente+conversa e é idempotente', () => {
+  const a = ingestInbound(db, { channel: 'whatsapp', phone: '+55 (11) 90000-0001', contactName: 'Cliente 1', body: 'oi', externalId: 'w1' });
+  const b = ingestInbound(db, { channel: 'whatsapp', phone: '5511900000001', body: 'oi', externalId: 'w1' });
+  assert.equal(b.duplicate, true);
+  assert.ok(a.conversationId > 0);
+  assert.equal((db.prepare('SELECT COUNT(*) n FROM messages WHERE external_id = ?').get('w1') as any).n, 1);
+});
+
+test('permissões: agente de outra equipe não vê conversa da equipe; admin vê', async () => {
+  const { conversationId } = ingestInbound(db, { channel: 'whatsapp', phone: '5511900000002', body: 'x', externalId: 'w2' });
+  // atribui à equipe A (Ana)
+  assert.equal((await call('admin@t.com', 'PATCH', `/api/conversations/${conversationId}`, { teamId: 1 })).statusCode, 200);
+  assert.equal((await call('ana@t.com', 'GET', `/api/conversations/${conversationId}`)).statusCode, 200);
+  assert.equal((await call('bia@t.com', 'GET', `/api/conversations/${conversationId}`)).statusCode, 404);
+  const list = (await call('bia@t.com', 'GET', '/api/conversations')).json();
+  assert.ok(!list.some((c: any) => c.id === conversationId));
+  assert.equal((await call('ana@t.com', 'POST', '/api/users', {})).statusCode, 403);
+});
+
+test('janela de 24h: texto livre bloqueado fora da janela, template permitido; nota nunca vai ao canal', async () => {
+  const { conversationId } = ingestInbound(db, {
+    channel: 'whatsapp', phone: '5511900000003', body: 'antigo', externalId: 'w3', timestamp: new Date(Date.now() - 30 * 3600_000),
+  });
+  const sentBefore = channel.sent.length;
+  const blocked = await call('ana@t.com', 'POST', `/api/conversations/${conversationId}/messages`, { kind: 'text', body: 'olá' });
+  assert.equal(blocked.statusCode, 409);
+  assert.equal(blocked.json().code, 'window_closed');
+
+  const note = await call('ana@t.com', 'POST', `/api/conversations/${conversationId}/messages`, { kind: 'note', body: 'interno' });
+  assert.equal(note.statusCode, 201);
+  assert.equal(channel.sent.length, sentBefore);
+
+  const tpl = await call('ana@t.com', 'POST', `/api/conversations/${conversationId}/messages`, { kind: 'template', templateId: 1, params: ['Maria'] });
+  assert.equal(tpl.statusCode, 201);
+  assert.equal(tpl.json().body, 'Olá Maria!');
+  assert.equal(channel.sent.at(-1)!.body, 'template:retorno(Maria)');
+  const conv = db.prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId) as any;
+  assert.equal(conv.status, 'in_progress');
+  assert.ok(conv.first_response_at);
+});
+
+test('resposta dentro da janela atribui ao respondente e entra em andamento', async () => {
+  const { conversationId } = ingestInbound(db, { channel: 'whatsapp', phone: '5511900000004', body: 'oi', externalId: 'w4' });
+  const r = await call('bia@t.com', 'POST', `/api/conversations/${conversationId}/messages`, { kind: 'text', body: 'Olá!' });
+  assert.equal(r.statusCode, 201);
+  const conv = db.prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId) as any;
+  assert.equal(conv.assignee_id, 3);
+  assert.equal(conv.status, 'in_progress');
+  // resolvida: nova mensagem do cliente abre outra conversa
+  await call('bia@t.com', 'PATCH', `/api/conversations/${conversationId}`, { status: 'resolved' });
+  const again = ingestInbound(db, { channel: 'whatsapp', phone: '5511900000004', body: 'voltei', externalId: 'w4b' });
+  assert.notEqual(again.conversationId, conversationId);
+});
+
+test('filtro de plantão: sábado/domingo no fuso local', async () => {
+  // 2026-01-03 é sábado; 2026-01-04 domingo; 2026-01-05 segunda (12:00 local = 15:00Z)
+  const mk = (phone: string, day: string, ext: string) =>
+    ingestInbound(db, { channel: 'whatsapp', phone, body: 'plantão', externalId: ext, timestamp: new Date(`${day}T12:00:00-03:00`) }).conversationId;
+  const sat = mk('5511911110001', '2026-01-03', 'p1');
+  const sun = mk('5511911110002', '2026-01-04', 'p2');
+  const mon = mk('5511911110003', '2026-01-05', 'p3');
+  assert.equal(localDow(new Date('2026-01-03T23:30:00-03:00')), 6); // fuso local, não UTC
+  const ids = async (q: string) => (await call('admin@t.com', 'GET', `/api/conversations?${q}`)).json().map((c: any) => c.id);
+  const both = await ids('weekend=both&from=2026-01-01&to=2026-01-31');
+  assert.ok(both.includes(sat) && both.includes(sun) && !both.includes(mon));
+  const onlySun = await ids('weekend=sun&from=2026-01-01&to=2026-01-31');
+  assert.deepEqual(onlySun.filter((i: number) => [sat, sun, mon].includes(i)), [sun]);
+});
+
+test('webhook: verificação de token e assinatura HMAC', async () => {
+  config.whatsapp.verifyToken = 'tok-123';
+  config.whatsapp.appSecret = 'segredo';
+  const ok = await app.inject({ method: 'GET', url: '/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=tok-123&hub.challenge=42' });
+  assert.equal(ok.body, '42');
+  assert.equal((await app.inject({ method: 'GET', url: '/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=x&hub.challenge=42' })).statusCode, 403);
+
+  const payload = JSON.stringify({ entry: [{ changes: [{ value: {
+    contacts: [{ wa_id: '5511977770000', profile: { name: 'Via Webhook' } }],
+    messages: [{ id: 'wamid.A', from: '5511977770000', timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body: 'oi webhook' } }],
+  } }] }] });
+  const sig = 'sha256=' + createHmac('sha256', 'segredo').update(payload).digest('hex');
+  const headers = { 'content-type': 'application/json' };
+  assert.equal((await app.inject({ method: 'POST', url: '/webhooks/whatsapp', headers: { ...headers, 'x-hub-signature-256': 'sha256=00' }, payload })).statusCode, 401);
+  assert.equal((await app.inject({ method: 'POST', url: '/webhooks/whatsapp', headers, payload })).statusCode, 401);
+  assert.equal((await app.inject({ method: 'POST', url: '/webhooks/whatsapp', headers: { ...headers, 'x-hub-signature-256': sig }, payload })).statusCode, 200);
+  assert.equal((db.prepare("SELECT name FROM customers WHERE phone = '5511977770000'").get() as any).name, 'Via Webhook');
+
+  // status: não rebaixa read -> delivered
+  const st = (status: string) => JSON.stringify({ entry: [{ changes: [{ value: { statuses: [{ id: 'wamid.A', status }] } }] }] });
+  db.prepare("UPDATE messages SET delivery_status = 'sent' WHERE external_id = 'wamid.A'").run();
+  for (const s of ['read', 'delivered']) {
+    const body = st(s);
+    await app.inject({ method: 'POST', url: '/webhooks/whatsapp', headers: { ...headers, 'x-hub-signature-256': 'sha256=' + createHmac('sha256', 'segredo').update(body).digest('hex') }, payload: body });
+  }
+  assert.equal((db.prepare("SELECT delivery_status s FROM messages WHERE external_id = 'wamid.A'").get() as any).s, 'read');
+  config.whatsapp.appSecret = '';
+});
+
+test('indicadores: contagem e tempo de primeira resposta', async () => {
+  const m = (await call('admin@t.com', 'GET', '/api/metrics')).json();
+  assert.ok(m.total >= 5);
+  assert.ok(m.firstResponse.samples >= 1);
+  assert.ok(Array.isArray(m.perDay) && m.perDay.length >= 1);
+});
