@@ -1,3 +1,4 @@
+import { lookup } from 'node:dns/promises';
 import type { Config } from './config.ts';
 
 export interface Mail { to: string; subject: string; text: string }
@@ -9,8 +10,10 @@ export class SmtpMailer implements Mailer {
   constructor(cfg: Config['smtp']) { this.cfg = cfg; }
   async send(mail: Mail) {
     const { default: nodemailer } = await import('nodemailer');
+    // O resolvedor interno do nodemailer estoura o timeout em algumas redes (IPv6); o DNS do sistema resolve rápido.
+    const { address } = await lookup(this.cfg.host, { family: 4 });
     const transport = nodemailer.createTransport({
-      host: this.cfg.host, port: this.cfg.port, secure: this.cfg.port === 465,
+      host: address, tls: { servername: this.cfg.host }, port: this.cfg.port, secure: this.cfg.port === 465,
       auth: { user: this.cfg.user, pass: this.cfg.pass },
       connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 15_000,
     });
