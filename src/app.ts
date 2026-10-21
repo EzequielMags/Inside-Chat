@@ -1,4 +1,4 @@
-import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyRequest, type FastifyServerOptions } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import { z, ZodError } from 'zod';
@@ -18,6 +18,8 @@ import {
 import { bus, type AppEvent } from './events.ts';
 import type { Channel } from './channels/types.ts';
 import { parseWebhook, verifySignature } from './channels/whatsapp.ts';
+import { makeMailer, type Mailer } from './mailer.ts';
+import { createSignup, decideByToken, decideSignup, describeApproval, describeVerification, reopenSignup, resendApproval, verifyEmail } from './signup.ts';
 
 declare module 'fastify' {
   interface FastifyRequest { user?: SessionUser; rawBody?: Buffer }
@@ -30,17 +32,33 @@ const id = z.coerce.number().int().positive();
 const email = z.string().trim().toLowerCase().email().max(200);
 const password = z.string().min(8, 'Senha com no mínimo 8 caracteres').max(200);
 
-export interface AppDeps { db: Db; channel: Channel; logger?: boolean }
+export interface AppDeps { db: Db; channel: Channel; mailer?: Mailer; logger?: boolean }
 
-export async function buildApp({ db, channel, logger = false }: AppDeps) {
+const PUBLIC_API = ['/api/auth/login', '/api/auth/signup', '/api/auth/verify', '/api/auth/approval', '/api/auth/approval/resend'];
+
+export async function buildApp({ db, channel, mailer = makeMailer(config), logger = false }: AppDeps) {
   const wa = config.whatsapp;
   if (wa.mode === 'cloud' && (!wa.appSecret || !wa.verifyToken || !wa.accessToken || !wa.phoneNumberId)) {
     throw new Error('WA_MODE=cloud exige WA_APP_SECRET, WA_VERIFY_TOKEN, WA_ACCESS_TOKEN e WA_PHONE_NUMBER_ID');
   }
 
-  const app = Fastify({ logger: logger ? { redact: ['req.headers.cookie', 'req.headers.authorization'] } : false, bodyLimit: 1_000_000 });
+  const serverOptions: FastifyServerOptions = {
+    logger: logger ? {
+      redact: ['req.headers.cookie', 'req.headers.authorization'],
+      // Sem query string no log: o link de aprovação leva o token em ?t=.
+      serializers: { req: (req: any) => ({ method: req.method, url: String(req.url).split('?')[0], hostname: req.hostname }) },
+    } : false,
+    bodyLimit: 1_000_000,
+    // Confia só nos N primeiros saltos (N = TRUST_PROXY); atrás deles, req.ip é o do cliente (limitadores).
+    trustProxy: (_addr: string, hop: number) => hop < config.trustProxy,
+  };
+  const app = Fastify(serverOptions);
   await app.register(fastifyCookie);
   const limiter = new LoginLimiter();
+  const signupLimiter = new LoginLimiter(5, 60 * 60_000);     // 5 cadastros por IP por hora
+  const approvalLimiter = new LoginLimiter(30, 15 * 60_000);  // consultas ao link de aprovação por IP
+  const resendLimiter = new LoginLimiter(5, 60 * 60_000);     // reemissões do link de aprovação por IP (cota própria)
+  const verifyLimiter = new LoginLimiter(30, 15 * 60_000);    // idem para o link de confirmação (contador separado)
 
   // JSON com corpo bruto preservado (necessário para validar a assinatura do webhook).
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, body: Buffer, done) => {
@@ -73,7 +91,7 @@ export async function buildApp({ db, channel, logger = false }: AppDeps) {
     if (!['GET', 'HEAD'].includes(req.method) && req.headers['x-requested-with'] !== 'cordial') {
       throw new HttpError(403, 'Requisição inválida');
     }
-    if (req.url.startsWith('/api/auth/login')) return;
+    if (PUBLIC_API.some((p) => req.url === p || req.url.startsWith(`${p}?`))) return;
     const user = loadUserByToken(db, req.cookies[COOKIE]);
     if (!user) throw new HttpError(401, 'Não autenticado');
     req.user = user;
@@ -92,11 +110,76 @@ export async function buildApp({ db, channel, logger = false }: AppDeps) {
     if (limiter.blocked(key)) throw new HttpError(429, 'Muitas tentativas. Aguarde alguns minutos.');
     const user = authenticate(db, body.email, body.password);
     if (!user) { limiter.fail(key); throw new HttpError(401, 'E-mail ou senha incorretos'); }
+    // A senha conferiu, então já não há risco de revelar a existência da conta.
+    if (user.status === 'pending') throw new HttpError(403, 'Seu cadastro ainda aguarda a aprovação do administrador.', 'pending');
+    if (user.status === 'rejected') throw new HttpError(403, 'Seu cadastro não foi aprovado.', 'rejected');
+    if (!user.active) { limiter.fail(key); throw new HttpError(401, 'E-mail ou senha incorretos'); }
     limiter.clear(key);
     const { token, expiresAt } = createSession(db, user.id);
     audit(db, user.id, 'auth.login', 'user', user.id);
     reply.setCookie(COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: config.production, path: '/', expires: expiresAt });
     return { ok: true };
+  });
+
+  // ---------- cadastro com aprovação ----------
+  app.post('/api/auth/signup', async (req, reply) => {
+    const b = z.object({
+      name: z.string().trim().min(2, 'Informe seu nome').max(120),
+      email,
+    }).strict().parse(req.body);
+    if (signupLimiter.blocked(req.ip)) throw new HttpError(429, 'Muitos cadastros em pouco tempo. Tente mais tarde.');
+    signupLimiter.fail(req.ip);
+    await createSignup(db, mailer, b, (m) => app.log.error(m));
+    return reply.status(202).send({ ok: true }); // mesma resposta para e-mail novo ou já existente
+  });
+
+  app.get('/api/auth/verify', async (req) => {
+    if (verifyLimiter.blocked(req.ip)) throw new HttpError(429, 'Muitas tentativas. Aguarde alguns minutos.');
+    verifyLimiter.fail(req.ip);
+    const { t } = z.object({ t: z.string().min(20).max(100) }).parse(req.query);
+    return describeVerification(db, t);
+  });
+
+  app.post('/api/auth/verify', async (req) => {
+    if (verifyLimiter.blocked(req.ip)) throw new HttpError(429, 'Muitas tentativas. Aguarde alguns minutos.');
+    verifyLimiter.fail(req.ip);
+    const b = z.object({ token: z.string().min(20).max(100), password }).strict().parse(req.body);
+    return { ok: true, ...verifyEmail(db, mailer, b.token, b.password, (m) => app.log.error(m)) };
+  });
+
+  app.get('/api/auth/approval', async (req) => {
+    if (approvalLimiter.blocked(req.ip)) throw new HttpError(429, 'Muitas tentativas. Aguarde alguns minutos.');
+    approvalLimiter.fail(req.ip);
+    const { t } = z.object({ t: z.string().min(20).max(100) }).parse(req.query);
+    return describeApproval(db, t);
+  });
+
+  app.post('/api/auth/approval', async (req) => {
+    if (approvalLimiter.blocked(req.ip)) throw new HttpError(429, 'Muitas tentativas. Aguarde alguns minutos.');
+    approvalLimiter.fail(req.ip);
+    const b = z.object({ token: z.string().min(20).max(100), decision: z.enum(['approve', 'reject']) }).strict().parse(req.body);
+    const who = await decideByToken(db, mailer, b.token, b.decision);
+    return { ok: true, decision: b.decision, ...who };
+  });
+
+  app.post('/api/auth/approval/resend', async (req, reply) => {
+    if (resendLimiter.blocked(req.ip)) throw new HttpError(429, 'Muitas tentativas. Aguarde alguns minutos.');
+    resendLimiter.fail(req.ip);
+    const b = z.object({ token: z.string().min(20).max(100) }).strict().parse(req.body);
+    resendApproval(db, mailer, b.token, (m) => app.log.error(m));
+    return reply.status(202).send({ ok: true });
+  });
+
+  app.post('/api/users/:id/approval', async (req) => {
+    const admin_ = admin(req);
+    const b = z.object({ decision: z.enum(['approve', 'reject']) }).strict().parse(req.body);
+    await decideSignup(db, mailer, id.parse((req.params as any).id), b.decision, admin_.id);
+    return { ok: true };
+  });
+
+  app.post('/api/users/:id/reopen', async (req) => {
+    const admin_ = admin(req);
+    return { ok: true, ...reopenSignup(db, mailer, id.parse((req.params as any).id), admin_.id) };
   });
 
   app.post('/api/auth/logout', async (req, reply) => {
@@ -247,7 +330,7 @@ export async function buildApp({ db, channel, logger = false }: AppDeps) {
   // ---------- usuários e equipes ----------
   app.get('/api/users', async (req) => {
     const isAdmin = me(req).role === 'admin';
-    const rows = db.prepare('SELECT id, name, email, role, active FROM users ORDER BY name').all() as Row[];
+    const rows = db.prepare('SELECT id, name, email, role, active, status, email_verified_at IS NOT NULL AS email_verified FROM users ORDER BY name').all() as Row[];
     const members = db.prepare('SELECT team_id, user_id FROM team_members').all() as Row[];
     return rows
       .filter((u) => isAdmin || u.active)
@@ -285,7 +368,9 @@ export async function buildApp({ db, channel, logger = false }: AppDeps) {
       name: z.string().trim().min(1).max(120).optional(), role: z.enum(['admin', 'agent']).optional(),
       active: z.boolean().optional(), password: password.optional(), teamIds: z.array(id).optional(),
     }).parse(req.body);
-    if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(uid)) throw new HttpError(404, 'Usuário não encontrado');
+    const target = db.prepare('SELECT status FROM users WHERE id = ?').get(uid) as Row | undefined;
+    if (!target) throw new HttpError(404, 'Usuário não encontrado');
+    if (target.status !== 'approved') throw new HttpError(400, 'Cadastro não aprovado: use Aprovar ou Recusar.');
     if (uid === admin_.id && (b.active === false || b.role === 'agent')) throw new HttpError(400, 'Você não pode remover seu próprio acesso de administrador');
     tx(db, () => {
       db.prepare('UPDATE users SET name = COALESCE(?, name), role = COALESCE(?, role), active = COALESCE(?, active) WHERE id = ?')

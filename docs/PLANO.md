@@ -16,6 +16,7 @@ O Integgri é usado apenas como referência conceitual do tipo de produto; nome,
 | Nova mensagem após "resolvida" | Abre uma **nova** conversa (histórico continua no cliente) | — |
 | Mídia (imagem/áudio/doc) | Fora do MVP: recebe placeholder `[imagem]` etc. | Etapa pós-MVP (download via media API) |
 | Tempo real | SSE (Server-Sent Events) em vez de WebSocket | Suficiente para 1 via; simples e sem dependência |
+| Cadastro de usuários | Autoatendimento com aprovação: conta nasce `pending`/inativa, sempre como `agent`; o aprovador (e-mail em `APPROVAL_EMAIL`, tipicamente o Gmail do admin) recebe link de uso único, 72 h, **só depois de o solicitante confirmar a posse do e-mail dele** (link próprio, onde ele também **define a senha**, evitando pré-sequestro de conta). Cadastro recusado bloqueia o e-mail até o admin **reabrir** pelo painel (volta a pendente, sem dar acesso; solicitante avisado por e-mail). Link de aprovação expirado pode ser reemitido pela página pública, mas o novo link vai sempre e só ao `APPROVAL_EMAIL` (teto de 5 e-mails de aprovação por cadastro; depois disso, só pelo painel). Posse do e-mail do admin = autorização. Painel de admin como alternativa | Dependência nova: `nodemailer`. Troca para OAuth/Gmail API se não quiser senha de app |
 | Conformidade | LGPD: minimização, log de auditoria, política de retenção documentada | Definir prazo de retenção com o jurídico |
 
 ## 2. Arquitetura e stack
@@ -48,7 +49,7 @@ Navegador (SPA) ◀──SSE── API Fastify ── serviços de domínio ─�
 
 ## 4. Modelo de dados (resumo)
 
-`users`, `teams`, `team_members`, `sessions` · `customers(phone único)` · `conversations(customer, channel, status,
+`users(status pending|approved|rejected)`, `signup_approvals(token_hash, expires_at, used_at)`, `teams`, `team_members`, `sessions` · `customers(phone único)` · `conversations(customer, channel, status,
 assignee, team, created_at, last_inbound_at, first_response_at, resolved_at, unread_count)` ·
 `messages(direction in/out, kind text|template|note, external_id único, delivery_status, local_dow)` ·
 `templates(name, language, body, category)` · `audit_log`.

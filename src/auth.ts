@@ -50,7 +50,8 @@ export function loadUserByToken(db: Db, token: string | undefined): SessionUser 
 }
 
 export function authenticate(db: Db, email: string, password: string): Row | null {
-  const user = db.prepare('SELECT * FROM users WHERE email = ? AND active = 1').get(email.trim().toLowerCase()) as Row | undefined;
+  // Não filtra por active/status: quem chama decide (login distingue "aguardando aprovação" só depois de a senha conferir).
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.trim().toLowerCase()) as Row | undefined;
   // Executa o hash mesmo sem usuário para não vazar a existência da conta pelo tempo de resposta.
   const ok = verifyPassword(password, user?.password_hash ?? 'scrypt$00$00');
   return user && ok ? user : null;
@@ -80,6 +81,7 @@ export class LoginLimiter {
     return h.n >= this.max;
   }
   fail(key: string) {
+    if (this.hits.size > 5000) for (const [k, v] of this.hits) if (v.reset < Date.now()) this.hits.delete(k);
     const h = this.hits.get(key);
     if (!h || h.reset < Date.now()) this.hits.set(key, { n: 1, reset: Date.now() + this.windowMs });
     else h.n++;
