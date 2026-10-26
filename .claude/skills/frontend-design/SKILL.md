@@ -46,13 +46,13 @@ Profissional, calmo e denso o bastante para trabalhar o dia todo. Nada de visual
 
 ## Layout e responsivo
 
-- Shell: sidebar de 210px + conteúdo. Inbox: lista de 340px + conversa. Páginas de gestão: `.page` com `max-width: 1000px`.
-- Abaixo de 800px: a sidebar vira barra horizontal e a inbox mostra **ou** a lista **ou** a conversa (`.inbox.has-thread`). Toda tela nova precisa funcionar em 375px de largura sem rolagem horizontal da página.
+- Shell: barra superior `.top` (marca, navegação com ícone + rótulo, usuário e sair) + conteúdo. Inbox: lista de `minmax(340px, 26%)` (busca + filtro + ⋮, chips de status com contador, itens com barra lateral por status, botão flutuante "+") e conversa; sem conversa aberta, painel vazio com ilustração. Filtros avançados ficam recolhidos atrás do botão de filtro. Páginas de gestão: `.page` com `max-width: 1000px`. Ícones: `icon(nome)` em `app.js` (SVG por DOM).
+- Abaixo de 800px: a barra superior mostra só os ícones (rótulos viram texto para leitor de tela) e a inbox mostra **ou** a lista **ou** a conversa (`.inbox.has-thread`). Toda tela nova precisa funcionar em 375px de largura sem rolagem horizontal da página.
 - Texto longo (nome, telefone, preview) sempre com `text-overflow: ellipsis` ou `overflow-wrap: anywhere`.
 
 ## Componentes existentes (reuse antes de criar)
 
-`.btn` (`.ghost`, `.small`), `.badge`, `.unread`, `.card`/`.cards`, `.bars`, `table`, `.form-row`, `.section`, `.filters`, `.tabs`, `.banner`, `.empty`, `.err`, `.muted`, `.msg` (`.out`, `.note`). Componente novo: classe curta no mesmo arquivo `styles.css`, agrupada sob o comentário da área (`/* inbox */`, `/* tabelas e cartões */`).
+`.btn` (`.ghost`, `.small`), `.icon-btn`, `.chip`, `.fab`, `.menu`, `.badge`, `.unread`, `.card`/`.cards`, `.bars`, `table`, `.form-row`, `.section`, `.filters`, `.tabs`, `.banner`, `.empty`, `.err`, `.muted`, `.msg` (`.out`, `.note`). Componente novo: classe curta no mesmo arquivo `styles.css`, agrupada sob o comentário da área (`/* inbox */`, `/* tabelas e cartões */`).
 
 ## Passo a passo
 

@@ -44,6 +44,49 @@ const opt = (value, label, sel) => h('option', { value, selected: sel }, label);
 const empty = (title, hint) => h('div', { class: 'empty' }, h('strong', {}, title), hint ? h('span', {}, hint) : null);
 const loading = (msg = 'Carregando…') => h('div', { class: 'loading', role: 'status' }, msg);
 
+// Ícones e ilustração próprios, montados por DOM (sem innerHTML e sem dependência de UI).
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svg(tag, attrs = {}, ...kids) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  for (const kid of kids.flat()) if (kid) el.append(kid);
+  return el;
+}
+const ICONS = {
+  search: [['circle', { cx: 11, cy: 11, r: 7 }], ['path', { d: 'M20 20l-3.5-3.5' }]],
+  filter: [['path', { d: 'M3 5h18l-7 8v6l-4-2v-4z' }]],
+  more: [['path', { d: 'M12 5h.01M12 12h.01M12 19h.01', 'stroke-width': 3 }]],
+  plus: [['path', { d: 'M12 5v14M5 12h14' }]],
+  chat: [['path', { d: 'M4 5h16v11H9l-5 4V5z' }]],
+  users: [['circle', { cx: 9, cy: 8, r: 3.2 }], ['path', { d: 'M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6' }], ['circle', { cx: 17, cy: 9, r: 2.4 }], ['path', { d: 'M17 14.2c2.4 0 4 1.8 4 4.3' }]],
+  chart: [['path', { d: 'M5 20V10M12 20V4M19 20v-7' }]],
+  shield: [['path', { d: 'M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z' }]],
+  logout: [['path', { d: 'M9 4H5v16h4M16 8l4 4-4 4M20 12H9' }]],
+};
+const icon = (name) => svg('svg', { viewBox: '0 0 24 24', class: 'ico', 'aria-hidden': 'true', focusable: 'false' }, ICONS[name].map(([tag, a]) => svg(tag, a)));
+
+function chatIllustration() {
+  return svg('svg', { viewBox: '0 0 220 180', class: 'ill', 'aria-hidden': 'true', focusable: 'false' },
+    svg('rect', { x: 20, y: 20, width: 130, height: 84, rx: 16, class: 'ill-card' }),
+    svg('path', { d: 'M44 104l-4 22 26-22z', class: 'ill-card' }),
+    svg('rect', { x: 38, y: 38, width: 70, height: 8, rx: 4, class: 'ill-line' }),
+    svg('rect', { x: 38, y: 56, width: 96, height: 8, rx: 4, class: 'ill-soft' }),
+    svg('rect', { x: 38, y: 74, width: 54, height: 8, rx: 4, class: 'ill-soft' }),
+    svg('rect', { x: 80, y: 84, width: 120, height: 72, rx: 16, class: 'ill-solid' }),
+    svg('path', { d: 'M176 156l6 18-26-18z', class: 'ill-solid' }),
+    svg('circle', { cx: 118, cy: 120, r: 7, class: 'ill-dot' }), svg('circle', { cx: 140, cy: 120, r: 7, class: 'ill-dot' }), svg('circle', { cx: 162, cy: 120, r: 7, class: 'ill-dot' }));
+}
+const emptyThread = () => h('div', { class: 'empty thread-empty' }, chatIllustration(),
+  h('strong', {}, 'Selecione uma conversa para começar.'), h('span', {}, 'Escolha uma na lista ou toque em + para iniciar outra.'));
+
+// Hoje mostra só a hora; antes disso, a data curta (lista de conversas).
+const fmtShort = (iso) => {
+  const d = new Date(iso);
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+};
+
 const state = {
   me: null, users: [], teams: [], templates: [],
   filters: { q: '', status: '', assignee: '', teamId: '', from: '', to: '', weekend: '' },
@@ -147,7 +190,7 @@ function render() {
   }
   const { page } = route();
   const main = h('main', { class: 'main' });
-  root.append(h('div', { class: 'shell' }, sidebar(page), main));
+  root.append(h('div', { class: 'shell' }, topbar(page), main));
   const views = { inbox: inboxView, customers: customersView, metrics: metricsView, admin: adminView };
   (views[page] ?? inboxView)(main);
 }
@@ -289,64 +332,96 @@ async function renderVerify() {
     h('p', { class: 'help' }, 'Se não foi você, feche esta página.')));
 }
 
-function sidebar(page) {
-  const link = (p, label) => h('a', { href: `#/${p}`, class: page === p ? 'active' : '', 'aria-current': page === p ? 'page' : null }, label);
-  return h('aside', { class: 'side' },
+function topbar(page) {
+  const link = (p, label, ico) => h('a', { href: `#/${p}`, class: page === p ? 'active' : '', 'aria-current': page === p ? 'page' : null }, icon(ico), h('span', {}, label));
+  return h('header', { class: 'top' },
     h('div', { class: 'brand' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Inside ', h('b', {}, 'Chat'))),
-    h('nav', { class: 'nav', 'aria-label': 'Principal' }, link('inbox', 'Caixa de entrada'), link('customers', 'Clientes'), link('metrics', 'Indicadores'),
-      state.me.role === 'admin' ? link('admin', 'Administração') : null),
+    h('nav', { class: 'nav', 'aria-label': 'Principal' }, link('inbox', 'Conversas', 'chat'), link('customers', 'Clientes', 'users'), link('metrics', 'Indicadores', 'chart'),
+      state.me.role === 'admin' ? link('admin', 'Administração', 'shield') : null),
     h('div', { class: 'who' },
-      h('div', {}, h('div', { class: 'name' }, state.me.name), h('div', { class: 'muted' }, state.me.role === 'admin' ? 'Administrador' : 'Atendente')),
-      h('button', { class: 'btn ghost small', onclick: async () => { await api('POST', '/api/auth/logout'); state.me = null; state.authMode = 'login'; render(); } }, 'Sair')),
+      h('div', { class: 'who-text' }, h('div', { class: 'name' }, state.me.name), h('div', { class: 'muted' }, state.me.role === 'admin' ? 'Administrador' : 'Atendente')),
+      h('div', { class: 'avatar small', 'aria-hidden': 'true' }, initials(state.me.name)),
+      h('button', { class: 'icon-btn', 'aria-label': 'Sair', title: 'Sair', onclick: async () => { await api('POST', '/api/auth/logout'); state.me = null; state.authMode = 'login'; render(); } }, icon('logout'))),
   );
 }
 
 // ---------- caixa de entrada ----------
+const CHIPS = [['', 'Todas'], ['open', 'Abertas'], ['in_progress', 'Em andamento'], ['resolved', 'Resolvidas']];
+const ADV_KEYS = ['assignee', 'teamId', 'weekend', 'from', 'to'];
+
 function inboxView(main) {
   const { arg } = route();
   const wrap = h('div', { class: `inbox ${arg ? 'has-thread' : ''}` });
   main.append(wrap);
   const f = state.filters;
-  const bind = (key, el) => { el.addEventListener('change', () => { f[key] = el.value; refreshList(); }); return el; };
-  const search = h('input', { type: 'search', placeholder: 'Buscar nome, telefone ou texto', value: f.q, class: 'wide', 'aria-label': 'Buscar conversas' });
+  const bind = (key, el) => { el.addEventListener('change', () => { f[key] = el.value; refreshList(); syncFilterBtn(); }); return el; };
+  const search = h('input', { type: 'search', placeholder: 'Pesquisar', value: f.q, 'aria-label': 'Buscar conversas por nome, telefone ou texto' });
   let t; search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { f.q = search.value; refreshList(); }, 250); });
   const sel = (key, label, options) => h('label', {}, label, bind(key, h('select', {}, options.map(([v, l]) => opt(v, l, f[key] === String(v))))));
   const activeUsers = state.users.filter((u) => u.active);
-  const filters = h('div', { class: 'filters' }, search,
-    sel('status', 'Status', [['', 'Todos'], ...Object.entries(STATUS)]),
+  const advanced = h('div', { class: `filters ${ADV_KEYS.some((k) => f[k]) ? '' : 'hidden'}`, id: 'adv-filters' },
     sel('assignee', 'Responsável', [['', 'Todos'], ['me', 'Eu'], ['none', 'Sem responsável'], ...activeUsers.map((u) => [u.id, u.name])]),
     sel('teamId', 'Equipe', [['', 'Todas'], ...state.teams.map((x) => [x.id, x.name])]),
     sel('weekend', 'Plantão', [['', 'Qualquer dia'], ['both', 'Sáb + Dom'], ['sat', 'Sábado'], ['sun', 'Domingo']]),
+    h('span'),
     h('label', {}, 'De', bind('from', h('input', { type: 'date', value: f.from }))),
-    h('label', {}, 'Até', bind('to', h('input', { type: 'date', value: f.to }))),
-  );
-  const tools = h('div', { class: 'filters' }, h('div', { class: 'tools' },
-    h('button', { class: 'btn small ghost', onclick: startConversation }, 'Nova conversa'),
+    h('label', {}, 'Até', bind('to', h('input', { type: 'date', value: f.to }))));
+  const filterBtn = h('button', { class: 'icon-btn', 'aria-label': 'Filtros', 'aria-controls': 'adv-filters', title: 'Filtros', onclick: () => {
+    advanced.classList.toggle('hidden'); filterBtn.setAttribute('aria-expanded', String(!advanced.classList.contains('hidden')));
+  } }, icon('filter'), h('i', { class: 'dot hidden' }));
+  const syncFilterBtn = () => { filterBtn.querySelector('.dot').classList.toggle('hidden', !ADV_KEYS.some((k) => f[k])); };
+  filterBtn.setAttribute('aria-expanded', String(!advanced.classList.contains('hidden'))); syncFilterBtn();
+
+  // menu ⋮: limpar filtros e (só em dev) simular cliente
+  const menu = h('div', { class: 'menu hidden', role: 'menu' },
+    h('button', { role: 'menuitem', onclick: () => { Object.assign(f, { q: '', status: '', assignee: '', teamId: '', from: '', to: '', weekend: '' }); render(); } }, 'Limpar filtros'),
     state.me.role === 'admin' && state.me.waMode === 'mock'
-      ? h('button', { class: 'btn small ghost', onclick: simulate, title: 'Disponível só em modo de desenvolvimento' }, 'Simular cliente') : null));
+      ? h('button', { role: 'menuitem', onclick: () => { menu.classList.add('hidden'); simulate(); }, title: 'Disponível só em modo de desenvolvimento' }, 'Simular cliente') : null);
+  const moreBtn = h('button', { class: 'icon-btn', 'aria-label': 'Mais opções', 'aria-haspopup': 'menu', title: 'Mais opções', onclick: (ev) => { ev.stopPropagation(); menu.classList.toggle('hidden'); } }, icon('more'));
+  const closeMenu = (ev) => { if (!menu.isConnected) return document.removeEventListener('click', closeMenu); if (!menu.contains(ev.target)) menu.classList.add('hidden'); };
+  document.addEventListener('click', closeMenu);
+  menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { menu.classList.add('hidden'); moreBtn.focus(); } });
+
+  const searchRow = h('div', { class: 'searchrow' }, h('label', { class: 'search' }, icon('search'), search), filterBtn, h('div', { class: 'menu-wrap' }, moreBtn, menu));
+  const chips = h('div', { class: 'chips', id: 'chips', role: 'group', 'aria-label': 'Filtrar por status' });
+  const fab = h('button', { class: 'fab', 'aria-label': 'Nova conversa', title: 'Nova conversa', onclick: startConversation }, icon('plus'));
   wrap.append(
-    h('section', { class: 'list-col', 'aria-label': 'Conversas' }, filters, tools, h('div', { class: 'items', id: 'items' }, loading())),
-    h('section', { class: 'thread', id: 'thread', 'aria-label': 'Conversa' }, empty('Selecione uma conversa', 'Escolha uma na lista ou inicie uma nova.')),
+    h('section', { class: 'list-col', 'aria-label': 'Conversas' }, searchRow, chips, advanced, h('div', { class: 'items', id: 'items' }, loading()), fab),
+    h('section', { class: 'thread', id: 'thread', 'aria-label': 'Conversa' }, emptyThread()),
   );
   refreshList();
   if (arg) openConversation(Number(arg));
 }
 
+function renderChips() {
+  const box = document.getElementById('chips');
+  if (!box) return;
+  const all = state.listAll ?? [];
+  const count = (st) => (st ? all.filter((c) => c.status === st).length : all.length);
+  box.replaceChildren(...CHIPS.map(([v, label]) => h('button', {
+    class: `chip ${state.filters.status === v ? 'on' : ''}`, 'aria-pressed': String(state.filters.status === v),
+    onclick: () => { state.filters.status = v; refreshList(); },
+  }, label, h('span', { class: 'count' }, count(v)))));
+}
+
 async function refreshList() {
   const box = document.getElementById('items');
   if (!box) return;
-  const qs = new URLSearchParams(Object.entries(state.filters).filter(([, v]) => v));
-  try { state.list = await api('GET', `/api/conversations?${qs}`); }
+  // O status é filtrado aqui (não na API) para os contadores dos chips mostrarem todos os status.
+  const qs = new URLSearchParams(Object.entries(state.filters).filter(([k, v]) => v && k !== 'status'));
+  try { state.listAll = await api('GET', `/api/conversations?${qs}`); }
   catch (e) { box.replaceChildren(h('div', { class: 'err', role: 'alert' }, e.message)); return; }
+  state.list = state.filters.status ? state.listAll.filter((c) => c.status === state.filters.status) : state.listAll;
+  renderChips();
   const selected = Number(route().arg);
   box.replaceChildren(...(state.list.length ? state.list.map((c) => h('button', {
-    class: `item ${c.id === selected ? 'sel' : ''}`, 'aria-current': c.id === selected ? 'true' : null, onclick: () => { location.hash = `#/inbox/${c.id}`; },
+    class: `item s-${c.status} ${c.id === selected ? 'sel' : ''}`, 'aria-current': c.id === selected ? 'true' : null, onclick: () => { location.hash = `#/inbox/${c.id}`; },
   },
   h('div', { class: 'avatar', 'aria-hidden': 'true' }, initials(c.customer_name)),
   h('div', {},
-    h('div', { class: 'row' }, h('span', { class: 'name' }, c.customer_name), c.unread_count ? h('span', { class: 'unread', 'aria-label': `${c.unread_count} não lidas` }, c.unread_count) : null),
-    h('div', { class: 'prev' }, c.last_preview || '—'),
-    h('div', { class: 'row meta' }, h('span', { class: `badge ${c.status}` }, STATUS[c.status]), h('span', {}, c.assignee_name ?? 'Sem responsável'), h('span', {}, fmtTime(c.last_message_at))))))
+    h('div', { class: 'row' }, h('span', { class: 'name' }, c.customer_name), h('time', { class: 'when', datetime: c.last_message_at, title: fmtTime(c.last_message_at) }, fmtShort(c.last_message_at))),
+    h('div', { class: 'row' }, h('span', { class: 'prev' }, c.last_preview || '—'), c.unread_count ? h('span', { class: 'unread', 'aria-label': `${c.unread_count} não lidas` }, c.unread_count) : null),
+    h('div', { class: 'row meta' }, h('span', { class: `badge ${c.status}` }, STATUS[c.status]), h('span', {}, c.assignee_name ?? 'Sem responsável')))))
     : [empty('Nenhuma conversa com esses filtros', 'Ajuste os filtros ou aguarde novas mensagens.')]));
 }
 
