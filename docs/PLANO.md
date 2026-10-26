@@ -13,6 +13,7 @@ O Integgri é usado apenas como referência conceitual do tipo de produto; nome,
 | Idioma / fuso | pt-BR, `America/Sao_Paulo` (offset fixo -03:00) | Variáveis `TIMEZONE` / `TZ_OFFSET` |
 | "Plantão de fim de semana" | Conversa que recebeu mensagem do cliente num sábado e/ou domingo (fuso local). Filtro: Sáb, Dom ou Ambos | Escala formal de plantonistas fica fora do MVP |
 | Permissões | Perfis `admin` e `agent`. Agente vê conversas atribuídas a ele, das suas equipes e as sem dono/sem equipe | Perfil supervisor depois |
+| Abas e nomes dos status | Lista com abas **Atendimento** (em andamento), **Aguardando** (aberta, sem dono; botão ACEITAR atribui a quem aceitou e move para Atendimento) e **Resolvidas**. Nº do atendimento = id da conversa (`#id`). Painel de detalhes do cliente recolhível; envio com Enter (Shift+Enter quebra linha) | Respostas rápidas com `/`, faixas de evento (atribuído/resolvido/reaberto) e histórico de eventos ficam para depois (exigem backend) |
 | Nova mensagem após "resolvida" | Abre uma **nova** conversa (histórico continua no cliente) | — |
 | Mídia (imagem/áudio/doc) | Fora do MVP: recebe placeholder `[imagem]` etc. | Etapa pós-MVP (download via media API) |
 | Tempo real | SSE (Server-Sent Events) em vez de WebSocket | Suficiente para 1 via; simples e sem dependência |

@@ -27,7 +27,7 @@ async function api(method, url, body) {
   return data;
 }
 
-const STATUS = { open: 'Aberta', in_progress: 'Em andamento', resolved: 'Resolvida' };
+const STATUS = { open: 'Aguardando', in_progress: 'Em atendimento', resolved: 'Resolvida' };
 const USER_STATUS = { pending: 'Aguardando', approved: 'Ativo', rejected: 'Recusado' };
 const fmtTime = (iso) => new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 const fmtDay = (iso) => new Date(iso).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
@@ -73,6 +73,11 @@ const ICONS = {
   chart: [['path', { d: 'M5 20V10M12 20V4M19 20v-7' }]],
   shield: [['path', { d: 'M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z' }]],
   palette: [['path', { d: 'M12 3a9 9 0 1 0 0 18c1.2 0 2-.8 2-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z' }], ['path', { d: 'M7.5 11h.01M10 7h.01M15 7h.01', 'stroke-width': 3 }]],
+  back: [['path', { d: 'M15 5l-7 7 7 7' }]],
+  right: [['path', { d: 'M9 5l7 7-7 7' }]],
+  send: [['path', { d: 'M4 12l16-8-6 16-3-7z' }]],
+  panel: [['path', { d: 'M4 5h16v14H4zM15 5v14' }]],
+  clock: [['path', { d: 'M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z' }]],
   logout: [['path', { d: 'M9 4H5v16h4M16 8l4 4-4 4M20 12H9' }]],
 };
 const icon = (name) => svg('svg', { viewBox: '0 0 24 24', class: 'ico', 'aria-hidden': 'true', focusable: 'false' }, ICONS[name].map(([tag, a]) => svg(tag, a)));
@@ -101,11 +106,12 @@ const fmtShort = (iso) => {
 
 const state = {
   me: null, users: [], teams: [], templates: [],
-  filters: { q: '', status: '', assignee: '', teamId: '', from: '', to: '', weekend: '' },
+  filters: { q: '', status: 'in_progress', assignee: '', teamId: '', from: '', to: '', weekend: '' },
   list: [], current: null, tab: 'text', es: null, authMode: 'login',
 };
 
 const root = document.getElementById('app');
+try { state.detailsOpen = localStorage.getItem('insidechat.details') !== '0'; } catch { state.detailsOpen = true; }
 
 // ---------- diálogo (substitui alert/prompt/confirm) ----------
 /**
@@ -372,12 +378,32 @@ function topbar(page) {
 }
 
 // ---------- caixa de entrada ----------
-const CHIPS = [['', 'Todas'], ['open', 'Abertas'], ['in_progress', 'Em andamento'], ['resolved', 'Resolvidas']];
+// Abas da lista = status da conversa (Atendimento, Aguardando, Resolvidas).
+const CHIPS = [['in_progress', 'Atendimento'], ['open', 'Aguardando'], ['resolved', 'Resolvidas']];
 const ADV_KEYS = ['assignee', 'teamId', 'weekend', 'from', 'to'];
+
+// Botão com menu suspenso (⋮). Fecha ao clicar fora ou com Esc.
+function popMenu(content, label, items) {
+  const menu = h('div', { class: 'menu hidden', role: 'menu', 'aria-label': label },
+    items.filter(Boolean).map(([text, fn]) => h('button', { role: 'menuitem', onclick: () => { menu.classList.add('hidden'); fn(); } }, text)));
+  const btn = h('button', { class: 'icon-btn', 'aria-label': label, 'aria-haspopup': 'menu', title: label, onclick: (ev) => { ev.stopPropagation(); menu.classList.toggle('hidden'); } }, content);
+  const close = (ev) => { if (!menu.isConnected) return document.removeEventListener('click', close); if (!menu.contains(ev.target)) menu.classList.add('hidden'); };
+  document.addEventListener('click', close);
+  menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { menu.classList.add('hidden'); btn.focus(); } });
+  return h('div', { class: 'menu-wrap' }, btn, menu);
+}
+
+function toggleDetails(btn) {
+  state.detailsOpen = !state.detailsOpen;
+  try { localStorage.setItem('insidechat.details', state.detailsOpen ? '1' : '0'); } catch { /* vale só nesta sessão */ }
+  document.querySelector('.inbox')?.classList.toggle('has-details', state.detailsOpen);
+  document.querySelectorAll('.panel-toggle').forEach((b) => b.setAttribute('aria-pressed', String(state.detailsOpen)));
+  if (!state.detailsOpen) btn?.focus();
+}
 
 function inboxView(main) {
   const { arg } = route();
-  const wrap = h('div', { class: `inbox ${arg ? 'has-thread' : ''}` });
+  const wrap = h('div', { class: `inbox ${arg ? 'has-thread' : ''} ${arg && state.detailsOpen ? 'has-details' : ''}` });
   main.append(wrap);
   const f = state.filters;
   const bind = (key, el) => { el.addEventListener('change', () => { f[key] = el.value; refreshList(); syncFilterBtn(); }); return el; };
@@ -399,21 +425,18 @@ function inboxView(main) {
   filterBtn.setAttribute('aria-expanded', String(!advanced.classList.contains('hidden'))); syncFilterBtn();
 
   // menu ⋮: limpar filtros e (só em dev) simular cliente
-  const menu = h('div', { class: 'menu hidden', role: 'menu' },
-    h('button', { role: 'menuitem', onclick: () => { Object.assign(f, { q: '', status: '', assignee: '', teamId: '', from: '', to: '', weekend: '' }); render(); } }, 'Limpar filtros'),
-    state.me.role === 'admin' && state.me.waMode === 'mock'
-      ? h('button', { role: 'menuitem', onclick: () => { menu.classList.add('hidden'); simulate(); }, title: 'Disponível só em modo de desenvolvimento' }, 'Simular cliente') : null);
-  const moreBtn = h('button', { class: 'icon-btn', 'aria-label': 'Mais opções', 'aria-haspopup': 'menu', title: 'Mais opções', onclick: (ev) => { ev.stopPropagation(); menu.classList.toggle('hidden'); } }, icon('more'));
-  const closeMenu = (ev) => { if (!menu.isConnected) return document.removeEventListener('click', closeMenu); if (!menu.contains(ev.target)) menu.classList.add('hidden'); };
-  document.addEventListener('click', closeMenu);
-  menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { menu.classList.add('hidden'); moreBtn.focus(); } });
+  const more = popMenu(icon('more'), 'Mais opções', [
+    ['Limpar filtros', () => { Object.assign(f, { q: '', status: 'in_progress', assignee: '', teamId: '', from: '', to: '', weekend: '' }); render(); }],
+    state.me.role === 'admin' && state.me.waMode === 'mock' ? ['Simular cliente', simulate] : null,
+  ]);
 
-  const searchRow = h('div', { class: 'searchrow' }, h('label', { class: 'search' }, icon('search'), search), filterBtn, h('div', { class: 'menu-wrap' }, moreBtn, menu));
+  const searchRow = h('div', { class: 'searchrow' }, h('label', { class: 'search' }, icon('search'), search), filterBtn, more);
   const chips = h('div', { class: 'chips', id: 'chips', role: 'group', 'aria-label': 'Filtrar por status' });
   const fab = h('button', { class: 'fab', 'aria-label': 'Nova conversa', title: 'Nova conversa', onclick: startConversation }, icon('plus'));
   wrap.append(
     h('section', { class: 'list-col', 'aria-label': 'Conversas' }, searchRow, chips, advanced, h('div', { class: 'items', id: 'items' }, loading()), fab),
     h('section', { class: 'thread', id: 'thread', 'aria-label': 'Conversa' }, emptyThread()),
+    h('aside', { class: 'details', id: 'details', 'aria-label': 'Detalhes do cliente' }),
   );
   refreshList();
   if (arg) openConversation(Number(arg));
@@ -423,11 +446,21 @@ function renderChips() {
   const box = document.getElementById('chips');
   if (!box) return;
   const all = state.listAll ?? [];
-  const count = (st) => (st ? all.filter((c) => c.status === st).length : all.length);
+  const count = (st) => all.filter((c) => c.status === st).length;
   box.replaceChildren(...CHIPS.map(([v, label]) => h('button', {
     class: `chip ${state.filters.status === v ? 'on' : ''}`, 'aria-pressed': String(state.filters.status === v),
     onclick: () => { state.filters.status = v; refreshList(); },
   }, label, h('span', { class: 'count' }, count(v)))));
+}
+
+// ACEITAR: o atendente assume a conversa que estava aguardando e ela passa para Atendimento.
+async function acceptConversation(id) {
+  try {
+    await api('PATCH', `/api/conversations/${id}`, { assigneeId: state.me.id, status: 'in_progress' });
+    state.filters.status = 'in_progress';
+    const target = `#/inbox/${id}`;
+    if (location.hash === target) { await openConversation(id); await refreshList(); } else location.hash = target;
+  } catch (e) { document.getElementById('items')?.prepend(h('div', { class: 'err list-err', role: 'alert' }, e.message)); }
 }
 
 async function refreshList() {
@@ -440,15 +473,54 @@ async function refreshList() {
   state.list = state.filters.status ? state.listAll.filter((c) => c.status === state.filters.status) : state.listAll;
   renderChips();
   const selected = Number(route().arg);
-  box.replaceChildren(...(state.list.length ? state.list.map((c) => h('button', {
-    class: `item s-${c.status} ${c.id === selected ? 'sel' : ''}`, 'aria-current': c.id === selected ? 'true' : null, onclick: () => { location.hash = `#/inbox/${c.id}`; },
+  const open = (c) => { location.hash = `#/inbox/${c.id}`; };
+  box.replaceChildren(...(state.list.length ? state.list.map((c) => h('div', {
+    class: `item s-${c.status} ${c.id === selected ? 'sel' : ''}`, role: 'button', tabindex: '0', 'aria-current': c.id === selected ? 'true' : null,
+    onclick: () => open(c), onkeydown: (ev) => { if (ev.target === ev.currentTarget && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); open(c); } },
   },
   h('div', { class: 'avatar', 'aria-hidden': 'true' }, initials(c.customer_name)),
   h('div', {},
     h('div', { class: 'row' }, h('span', { class: 'name' }, c.customer_name), h('time', { class: 'when', datetime: c.last_message_at, title: fmtTime(c.last_message_at) }, fmtShort(c.last_message_at))),
     h('div', { class: 'row' }, h('span', { class: 'prev' }, c.last_preview || '—'), c.unread_count ? h('span', { class: 'unread', 'aria-label': `${c.unread_count} não lidas` }, c.unread_count) : null),
-    h('div', { class: 'row meta' }, h('span', { class: `badge ${c.status}` }, STATUS[c.status]), h('span', {}, c.assignee_name ?? 'Sem responsável')))))
-    : [empty('Nenhuma conversa com esses filtros', 'Ajuste os filtros ou aguarde novas mensagens.')]));
+    h('div', { class: 'row meta' }, h('span', { class: `badge ${c.status}` }, STATUS[c.status]),
+      c.status === 'open' ? null : h('span', {}, c.assignee_name ?? 'Sem responsável'),
+      c.status === 'open' ? h('button', { class: 'btn ghost small accept', onclick: (ev) => { ev.stopPropagation(); acceptConversation(c.id); } }, 'ACEITAR') : null))))
+    : [empty(`Nenhuma conversa em ${CHIPS.find(([v]) => v === state.filters.status)?.[1] ?? 'conversas'}`, 'Ajuste os filtros ou aguarde novas mensagens.')]));
+}
+
+const fmtLeft = (iso) => {
+  const ms = Math.max(0, new Date(iso).getTime() - Date.now());
+  return `${Math.floor(ms / 3_600_000)} h ${String(Math.floor((ms % 3_600_000) / 60_000)).padStart(2, '0')} min`;
+};
+
+function renderDetails(data, assignee) {
+  const aside = document.getElementById('details');
+  if (!aside) return;
+  const { conversation: c, customer, window: win } = data;
+  const team = state.teams.find((x) => x.id === c.team_id);
+  const row = (k, v) => h('div', { class: 'kv' }, h('span', { class: 'muted' }, k), h('strong', {}, v));
+  const section = (title, ...kids) => h('section', { class: 'dp-sec' }, h('h4', {}, title), ...kids);
+  const pct = win.open ? Math.max(2, Math.min(100, ((new Date(win.expiresAt) - Date.now()) / (24 * 3_600_000)) * 100)) : 0;
+  const bar = h('div', { class: 'bar-track' }); const fill = h('i', { class: win.open ? '' : 'closed' }); fill.style.width = `${pct}%`; bar.append(fill);
+  const prev = h('div', { class: 'dp-prev' }, h('span', { class: 'muted' }, 'Carregando…'));
+  aside.replaceChildren(
+    h('div', { class: 'dp-head' }, h('h4', {}, 'Detalhes'),
+      h('button', { class: 'icon-btn', 'aria-label': 'Recolher painel de detalhes', title: 'Recolher', onclick: (ev) => toggleDetails(ev.currentTarget) }, icon('right'))),
+    h('div', { class: 'dp-profile' }, h('div', { class: 'avatar lg', 'aria-hidden': 'true' }, initials(customer.name)),
+      h('a', { class: 'dp-name', href: `#/customers/${customer.id}` }, customer.name), h('span', { class: 'muted' }, fmtPhone(customer.phone))),
+    section('Atendimento', row('Status', STATUS[c.status]), row('Responsável', assignee?.name ?? '—'), row('Equipe', team?.name ?? 'Sem equipe'), row('Cliente desde', new Date(customer.created_at).toLocaleDateString('pt-BR'))),
+    section('Janela de 24 h', bar, h('p', { class: 'help' }, win.open
+      ? `Texto livre liberado até ${fmtTime(win.expiresAt)}. Depois, só template aprovado.`
+      : 'Encerrada: só é possível enviar um template aprovado até o cliente escrever de novo.')),
+    section('Notas do cliente', h('p', { class: 'dp-notes' }, customer.notes || 'Sem observações.'), h('a', { href: `#/customers/${customer.id}` }, 'Editar no cadastro')),
+    section('Conversas anteriores', prev),
+  );
+  api('GET', `/api/customers/${customer.id}`).then(({ conversations }) => {
+    const others = conversations.filter((x) => x.id !== c.id).slice(0, 5);
+    prev.replaceChildren(...(others.length ? others.map((x) => h('a', { class: 'dp-conv', href: `#/inbox/${x.id}` },
+      h('span', {}, `#${x.id} · ${fmtShort(x.last_message_at)}`), h('span', { class: `badge ${x.status}` }, STATUS[x.status])))
+      : [h('span', { class: 'muted' }, 'Nenhuma.')]));
+  }).catch(() => prev.replaceChildren(h('span', { class: 'muted' }, 'Não foi possível carregar.')));
 }
 
 async function openConversation(id, keepComposer = false) {
@@ -462,22 +534,40 @@ async function openConversation(id, keepComposer = false) {
   if (data.conversation.unread_count) { api('POST', `/api/conversations/${id}/read`).then(refreshList).catch(() => {}); }
   const draft = keepComposer ? document.getElementById('draft')?.value : '';
   const { conversation: c, customer } = data;
-  const ctlErr = h('div', { class: 'err', role: 'alert' });
+  const ctlErr = h('div', { class: 'err head-err', role: 'alert' });
   const patch = async (body) => { ctlErr.textContent = ''; try { await api('PATCH', `/api/conversations/${id}`, body); } catch (e) { ctlErr.textContent = e.message; } };
   const activeUsers = state.users.filter((u) => u.active);
+  const assignee = state.users.find((u) => u.id === c.assignee_id);
+  const url = `/api/conversations/${id}`;
+  const askAssign = () => askForm({
+    title: 'Atribuir conversa', submit: 'Atribuir',
+    fields: [{ name: 'assigneeId', label: 'Responsável', type: 'select', value: c.assignee_id ?? '', options: [['', 'Sem responsável'], ...activeUsers.map((u) => [u.id, u.name])] }],
+    onSubmit: (v) => api('PATCH', url, { assigneeId: v.assigneeId ? Number(v.assigneeId) : null }),
+  });
+  const askTeam = () => askForm({
+    title: 'Mudar equipe', submit: 'Salvar',
+    fields: [{ name: 'teamId', label: 'Equipe', type: 'select', value: c.team_id ?? '', options: [['', 'Sem equipe'], ...state.teams.map((x) => [x.id, x.name])] }],
+    onSubmit: (v) => api('PATCH', url, { teamId: v.teamId ? Number(v.teamId) : null }),
+  });
 
+  const win = data.window;
+  const pill = h('span', { class: `win-pill ${win.open ? 'open' : 'closed'}` }, icon('clock'), win.open ? [h('span', { class: 'lbl' }, 'Janela aberta · '), fmtLeft(win.expiresAt)] : 'Janela fechada');
   const head = h('div', { class: 'thread-head' },
-    h('div', { class: 'who' },
-      h('button', { class: 'btn ghost small back', 'aria-label': 'Voltar para a lista', onclick: () => { location.hash = '#/inbox'; } }, '←'),
-      h('div', { class: 'avatar', 'aria-hidden': 'true' }, initials(customer.name)),
-      h('div', {}, h('h3', {}, h('a', { href: `#/customers/${customer.id}` }, customer.name)), h('div', { class: 'muted' }, fmtPhone(customer.phone)))),
-    h('div', { class: 'ctl' },
-      h('select', { 'aria-label': 'Status', onchange: (e) => patch({ status: e.target.value }) }, Object.entries(STATUS).map(([v, l]) => opt(v, l, c.status === v))),
-      h('select', { 'aria-label': 'Responsável', onchange: (e) => patch({ assigneeId: e.target.value ? Number(e.target.value) : null }) },
-        opt('', 'Sem responsável', !c.assignee_id), activeUsers.map((u) => opt(u.id, u.name, c.assignee_id === u.id))),
-      h('select', { 'aria-label': 'Equipe', onchange: (e) => patch({ teamId: e.target.value ? Number(e.target.value) : null }) },
-        opt('', 'Sem equipe', !c.team_id), state.teams.map((x) => opt(x.id, x.name, c.team_id === x.id)))),
-    ctlErr,
+    h('button', { class: 'icon-btn back', 'aria-label': 'Voltar para a lista', title: 'Voltar', onclick: () => { location.hash = '#/inbox'; } }, icon('back')),
+    h('div', { class: 'avatar', 'aria-hidden': 'true' }, initials(customer.name)),
+    h('div', { class: 'who-info' },
+      h('div', { class: 'row1' }, h('h3', {}, h('a', { href: `#/customers/${customer.id}` }, customer.name)), h('span', { class: 'ticket', title: 'Número do atendimento' }, `#${c.id}`)),
+      h('div', { class: 'row2' }, h('span', { class: 'muted' }, h('span', { class: 'lbl' }, 'Atribuído a: '), assignee?.name ?? '—'),
+        h('button', { class: 'icon-btn mini', 'aria-label': 'Atribuir conversa', title: 'Atribuir', onclick: askAssign }, icon('plus')), pill)),
+    h('div', { class: 'head-actions' },
+      c.status === 'resolved'
+        ? h('button', { class: 'btn ghost small', onclick: () => patch({ status: 'in_progress' }) }, 'Reabrir')
+        : h('button', { class: 'btn ghost small', onclick: () => patch({ status: 'resolved' }) }, 'Resolver'),
+      h('button', { class: 'icon-btn panel-toggle', 'aria-label': 'Painel de detalhes', 'aria-pressed': String(state.detailsOpen), title: 'Painel de detalhes', onclick: (ev) => toggleDetails(ev.currentTarget) }, icon('panel')),
+      popMenu(icon('more'), 'Mais opções da conversa', [
+        ['Atribuir…', askAssign], ['Mudar equipe…', askTeam],
+        c.status === 'open' ? null : ['Devolver para Aguardando', () => patch({ status: 'open', assigneeId: null })],
+      ])),
   );
 
   let lastDay = '';
@@ -489,36 +579,43 @@ async function openConversation(id, keepComposer = false) {
     const who = m.kind === 'note' ? `Nota interna · ${m.sender_name}` : m.direction === 'out' ? (m.sender_name ?? '') : '';
     const time = new Date(m.created_at).toLocaleTimeString('pt-BR', { timeStyle: 'short' });
     const st = m.delivery_status === 'failed' ? ` · não entregue${m.error ? `: ${m.error}` : ''}` : m.delivery_status === 'read' ? ' · lida' : m.delivery_status === 'delivered' ? ' · entregue' : '';
-    items.push(h('div', { class: `msg ${cls}` }, m.body,
-      h('div', { class: `info ${m.delivery_status === 'failed' ? 'failed' : ''}` }, [who, m.template_name ? `template ${m.template_name}` : '', time + st].filter(Boolean).join(' · '))));
+    const bubble = h('div', { class: `msg ${cls}` }, m.body,
+      h('div', { class: `info ${m.delivery_status === 'failed' ? 'failed' : ''}` }, [who, m.template_name ? `template ${m.template_name}` : '', time + st].filter(Boolean).join(' · ')));
+    // mensagem recebida: avatar do cliente ao lado
+    items.push(m.direction === 'in' && m.kind !== 'note'
+      ? h('div', { class: 'mrow' }, h('div', { class: 'avatar xs', 'aria-hidden': 'true' }, initials(customer.name)), bubble) : bubble);
   }
   const msgs = h('div', { class: 'msgs', tabindex: '0', 'aria-label': 'Mensagens' }, items);
 
-  const win = data.window;
   const banner = !win.open && c.status !== 'resolved'
     ? h('div', { class: 'banner', role: 'status' }, 'A janela de 24 h do WhatsApp está encerrada: só é possível enviar um template aprovado.') : null;
   if (!win.open && state.tab === 'text') state.tab = 'template';
 
-  thread.replaceChildren(...[head, msgs, banner, c.status === 'resolved'
+  thread.replaceChildren(...[head, ctlErr, msgs, banner, c.status === 'resolved'
     ? h('div', { class: 'banner', role: 'status' }, 'Conversa resolvida. Reabra para responder (notas internas continuam disponíveis).') : null,
   composer(id, win, draft)].filter(Boolean)); // replaceChildren transformaria null no texto "null"
   msgs.scrollTop = msgs.scrollHeight;
+  renderDetails(data, assignee);
 }
 
 function composer(id, win, draft = '') {
   const err = h('div', { class: 'err', role: 'alert' });
   const tabs = h('div', { class: 'tabs', role: 'tablist' });
-  const body = h('div');
+  const body = h('div', { class: 'composer-body' });
   const send = async (payload, btn) => {
     err.textContent = ''; if (btn) btn.disabled = true;
     try { await api('POST', `/api/conversations/${id}/messages`, payload); await openConversation(id); await refreshList(); }
     catch (e) { err.textContent = e.message; if (btn) btn.disabled = false; }
   };
   const textBox = (placeholder, kind) => {
-    const ta = h('textarea', { id: 'draft', rows: 3, placeholder, maxlength: 4096, 'aria-label': kind === 'note' ? 'Nota interna' : 'Mensagem' }); ta.value = draft;
-    const go = h('button', { class: 'btn', onclick: () => ta.value.trim() && send({ kind, body: ta.value }, go) }, kind === 'note' ? 'Salvar nota' : 'Enviar');
-    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) go.click(); });
-    return [ta, h('div', { class: 'actions' }, h('span', { class: 'help' }, 'Ctrl+Enter envia'), go)];
+    const ta = h('textarea', { id: 'draft', rows: 1, placeholder, maxlength: 4096, 'aria-label': kind === 'note' ? 'Nota interna' : 'Mensagem' }); ta.value = draft;
+    const label = kind === 'note' ? 'Salvar nota' : 'Enviar mensagem';
+    const go = h('button', { class: 'send-btn', 'aria-label': label, title: label, onclick: () => ta.value.trim() && send({ kind, body: ta.value }, go) }, icon('send'));
+    const grow = () => { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`; };
+    ta.addEventListener('input', grow);
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); go.click(); } });
+    requestAnimationFrame(grow);
+    return [h('div', { class: `sendbar ${kind === 'note' ? 'note' : ''}` }, ta, go), h('span', { class: 'help' }, 'Enter envia · Shift+Enter quebra a linha')];
   };
   const tplBox = () => {
     const tpls = state.templates.filter((t) => t.active);
@@ -549,7 +646,7 @@ function composer(id, win, draft = '') {
       h('button', { class: state.tab === k ? 'on' : '', role: 'tab', 'aria-selected': state.tab === k ? 'true' : 'false', onclick: () => { state.tab = k; draw(); } }, l)));
     const content = state.tab === 'note' ? textBox('Nota visível só para a equipe (não é enviada ao cliente)', 'note')
       : state.tab === 'template' ? tplBox()
-        : win.open ? textBox('Escreva sua resposta', 'text') : [h('div', { class: 'muted' }, 'Janela de 24 h encerrada. Use a aba Template.')];
+        : win.open ? textBox('Escreva uma mensagem…', 'text') : [h('div', { class: 'muted' }, 'Janela de 24 h encerrada. Use a aba Template.')];
     body.replaceChildren(...content);
   };
   draw();
@@ -633,7 +730,7 @@ async function metricsView(main) {
     const bars = (rows, k, v) => { const max = Math.max(1, ...rows.map((r) => r[v])); return h('div', { class: 'bars' }, rows.map((r) => h('div', { class: 'bar' },
       h('span', {}, r[k]), (() => { const i = h('i'); i.style.width = `${(r[v] / max) * 100}%`; return h('div', {}, i); })(), h('span', {}, String(r[v]))))); };
     out.replaceChildren(
-      h('div', { class: 'cards' }, card('Conversas', m.total), card('Abertas', m.byStatus.open), card('Em andamento', m.byStatus.in_progress), card('Resolvidas', m.byStatus.resolved),
+      h('div', { class: 'cards' }, card('Conversas', m.total), card('Aguardando', m.byStatus.open), card('Em atendimento', m.byStatus.in_progress), card('Resolvidas', m.byStatus.resolved),
         card('1ª resposta (média)', fmtDur(m.firstResponse.avgSeconds)), card('1ª resposta (mediana)', fmtDur(m.firstResponse.medianSeconds)),
         card('Resolução (média)', fmtDur(m.resolution.avgSeconds))),
       h('div', { class: 'section' }, h('h3', {}, 'Conversas por dia'), m.perDay.length ? bars(m.perDay, 'day', 'count') : empty('Sem dados no período')),
