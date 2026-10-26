@@ -13,6 +13,7 @@ Profissional, calmo e denso o bastante para trabalhar o dia todo. Nada de visual
 
 - **Tema**: escuro, único (não há tema claro). Carvão quente (`--bg` #0d0c0b, `--surface` #161412, `--surface-2` #1f1c19), divisórias `--line` de 1px.
 - **Cor da marca**: laranja `--brand` (#ff7a1a) com texto escuro `--brand-ink`; para texto/links laranja sobre fundo escuro use `--brand-text` (#ff9a4d). `--accent` âmbar claro só para o anel de foco.
+- **Cor de destaque trocável**: botão de paleta na barra superior (`accentMenu()` em `app.js`), escolha salva em `localStorage` (`insidechat.accent`) e aplicada em `<html data-accent>`. Laranja é o padrão em `:root`; azul, verde, roxo e rosa só trocam os tokens `--brand*`, `--out` e `--glow-*` em `styles.css`. **Cor nova = bloco `[data-accent="x"]` com todos esses tokens**, texto ≥ 4,5:1 e, se a mensagem enviada ficar parecida com a nota interna, trocar também `--note`/`--note-line` (como no roxo). A logo continua laranja (identidade da marca).
 - **Tipografia**: `system-ui`, 14px, line-height 1.45. Títulos de página `h2` (padrão do navegador, margem `0 0 14px`); rótulos de filtro 12px `--muted`; cabeçalho de tabela 12px maiúsculo com `letter-spacing: .04em`.
 - **Raios**: 8px para controles, 10–14px para cartões, tabela e login, 999px para badges.
 - **Espaçamento**: múltiplos de 2 entre 4 e 28px (gaps 4/6/8/12, padding de página 20px, seções com 28px).
