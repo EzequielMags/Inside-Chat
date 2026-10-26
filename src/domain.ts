@@ -204,6 +204,21 @@ export interface ConversationPatch {
   teamId?: number | null;
 }
 
+/**
+ * ACEITAR: o atendente assume uma conversa que está "Aguardando" (aberta e sem dono).
+ * Atômico: se outra pessoa aceitou antes, nada muda e responde 409 (evita sobrescrever o dono).
+ */
+export function acceptConversation(db: Db, user: SessionUser, id: number): Row {
+  getConversationFor(db, user, id); // 404 se não puder ver
+  const changed = db.prepare(
+    `UPDATE conversations SET assignee_id = ?, status = 'in_progress' WHERE id = ? AND status = 'open' AND assignee_id IS NULL`,
+  ).run(user.id, id).changes;
+  if (!changed) throw new HttpError(409, 'Esta conversa já foi aceita por outra pessoa.', 'already_taken');
+  audit(db, user.id, 'conversation.accept', 'conversation', id);
+  emit({ type: 'conversation.updated', conversationId: id });
+  return db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as Row;
+}
+
 export function updateConversation(db: Db, user: SessionUser, id: number, patch: ConversationPatch): Row {
   const conv = getConversationFor(db, user, id);
   const sets: string[] = [];

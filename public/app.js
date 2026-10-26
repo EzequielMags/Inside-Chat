@@ -456,11 +456,11 @@ function renderChips() {
 // ACEITAR: o atendente assume a conversa que estava aguardando e ela passa para Atendimento.
 async function acceptConversation(id) {
   try {
-    await api('PATCH', `/api/conversations/${id}`, { assigneeId: state.me.id, status: 'in_progress' });
+    await api('POST', `/api/conversations/${id}/accept`);
     state.filters.status = 'in_progress';
     const target = `#/inbox/${id}`;
     if (location.hash === target) { await openConversation(id); await refreshList(); } else location.hash = target;
-  } catch (e) { document.getElementById('items')?.prepend(h('div', { class: 'err list-err', role: 'alert' }, e.message)); }
+  } catch (e) { await refreshList(); document.getElementById('items')?.prepend(h('div', { class: 'err list-err', role: 'alert' }, e.message)); }
 }
 
 async function refreshList() {
