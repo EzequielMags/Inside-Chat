@@ -13,7 +13,7 @@ import {
 } from './auth.ts';
 import {
   HttpError, applyStatus, getConversationFor, ingestInbound, listConversations, metrics, normalizePhone,
-  sendMessage, updateConversation, acceptConversation, windowInfo, accessClause,
+  sendMessage, updateConversation, acceptConversation, windowInfo, accessClause, addEvent, searchInConversation, listQuickReplies, canAccess,
 } from './domain.ts';
 import { bus, type AppEvent } from './events.ts';
 import type { Channel } from './channels/types.ts';
@@ -248,11 +248,16 @@ export async function buildApp({ db, channel, mailer = makeMailer(config), logge
         const info = db.prepare('INSERT INTO customers (name, phone) VALUES (?,?)').run(body.name || phone, phone);
         c = { id: Number(info.lastInsertRowid) };
       }
-      const open = db.prepare(`SELECT id FROM conversations WHERE customer_id = ? AND status != 'resolved' ORDER BY id DESC LIMIT 1`).get(c.id) as Row | undefined;
-      if (open) return open.id as number;
+      const open = db.prepare(`SELECT * FROM conversations WHERE customer_id = ? AND status != 'resolved' ORDER BY id DESC LIMIT 1`).get(c.id) as Row | undefined;
+      if (open) {
+        // Não revela conversa de outra equipe: sem acesso, só informa que já há atendimento.
+        if (!canAccess(me(req), open)) throw new HttpError(409, 'Já existe um atendimento em andamento com este cliente.', 'already_open');
+        return open.id as number;
+      }
       const info = db.prepare(
         `INSERT INTO conversations (customer_id, created_at, last_message_at, assignee_id, status) VALUES (?,?,?,?, 'in_progress')`,
       ).run(c.id, now, now, me(req).id);
+      addEvent(db, Number(info.lastInsertRowid), me(req).id, `${me(req).name} iniciou a conversa`);
       return Number(info.lastInsertRowid);
     });
     return { id: conversationId };
@@ -267,6 +272,11 @@ export async function buildApp({ db, channel, mailer = makeMailer(config), logge
        FROM messages m LEFT JOIN users u ON u.id = m.sender_user_id WHERE m.conversation_id = ? ORDER BY m.id LIMIT 1000`,
     ).all(conv.id);
     return { conversation: conv, customer, messages, window: windowInfo(conv.last_inbound_at) };
+  });
+
+  app.get('/api/conversations/:id/search', async (req) => {
+    const { q } = z.object({ q: z.string().trim().min(1, 'Digite algo para buscar').max(100) }).parse(req.query);
+    return { ids: searchInConversation(db, me(req), id.parse((req.params as any).id), q) };
   });
 
   app.post('/api/conversations/:id/read', async (req) => {
@@ -445,6 +455,37 @@ export async function buildApp({ db, channel, mailer = makeMailer(config), logge
     db.prepare('UPDATE templates SET active = COALESCE(?, active), body = COALESCE(?, body) WHERE id = ?')
       .run(b.active === undefined ? null : Number(b.active), b.body ?? null, tid);
     audit(db, admin_.id, 'template.update', 'template', tid);
+    return { ok: true };
+  });
+
+  // ---------- respostas rápidas ("/" no compositor) ----------
+  const quickBody = z.object({
+    shortcut: z.string().trim().toLowerCase().regex(/^[a-z0-9_]{1,30}$/, 'Atalho: letras minúsculas, números e _ (sem a barra)'),
+    body: z.string().trim().min(1, 'Informe o texto').max(1024),
+    teamId: id.nullable().default(null),
+  });
+
+  app.get('/api/quick-replies', async (req) => listQuickReplies(db, me(req)));
+
+  app.post('/api/quick-replies', async (req, reply) => {
+    const admin_ = admin(req);
+    const b = quickBody.parse(req.body);
+    if (b.teamId !== null && !db.prepare('SELECT 1 FROM teams WHERE id = ?').get(b.teamId)) throw new HttpError(400, 'Equipe inválida');
+    try {
+      const info = db.prepare('INSERT INTO quick_replies (shortcut, body, team_id) VALUES (?,?,?)').run(b.shortcut, b.body, b.teamId);
+      audit(db, admin_.id, 'quick_reply.create', 'quick_reply', Number(info.lastInsertRowid));
+      return reply.status(201).send({ id: Number(info.lastInsertRowid) });
+    } catch (e: any) {
+      if (String(e.message).includes('UNIQUE')) throw new HttpError(409, 'Já existe uma resposta com este atalho');
+      throw e;
+    }
+  });
+
+  app.delete('/api/quick-replies/:id', async (req) => {
+    const admin_ = admin(req);
+    const qid = id.parse((req.params as any).id);
+    db.prepare('DELETE FROM quick_replies WHERE id = ?').run(qid);
+    audit(db, admin_.id, 'quick_reply.delete', 'quick_reply', qid);
     return { ok: true };
   });
 

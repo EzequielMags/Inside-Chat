@@ -198,6 +198,14 @@ export async function sendMessage(db: Db, channel: Channel, user: SessionUser, c
 
 // ---------- atualização de conversa ----------
 
+/** Evento do sistema na linha do tempo ("atribuída a …"). kind='event' nunca passa pelo Channel e não muda a prévia da lista. */
+export function addEvent(db: Db, conversationId: number, userId: number | null, body: string) {
+  const now = new Date();
+  db.prepare(
+    `INSERT INTO messages (conversation_id, direction, kind, body, sender_user_id, local_dow, created_at) VALUES (?, 'out', 'event', ?, ?, ?, ?)`,
+  ).run(conversationId, body, userId, localDow(now), now.toISOString());
+}
+
 export interface ConversationPatch {
   status?: 'open' | 'in_progress' | 'resolved';
   assigneeId?: number | null;
@@ -215,6 +223,7 @@ export function acceptConversation(db: Db, user: SessionUser, id: number): Row {
   ).run(user.id, id).changes;
   if (!changed) throw new HttpError(409, 'Esta conversa já foi aceita por outra pessoa.', 'already_taken');
   audit(db, user.id, 'conversation.accept', 'conversation', id);
+  addEvent(db, id, user.id, `Atendimento atribuído a ${user.name}`);
   emit({ type: 'conversation.updated', conversationId: id });
   return db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as Row;
 }
@@ -240,6 +249,18 @@ export function updateConversation(db: Db, user: SessionUser, id: number, patch:
   }
   if (sets.length) {
     db.prepare(`UPDATE conversations SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
+    if (patch.assigneeId !== undefined && patch.assigneeId !== conv.assignee_id) {
+      const to = patch.assigneeId === null ? null : (db.prepare('SELECT name FROM users WHERE id = ?').get(patch.assigneeId) as Row).name;
+      addEvent(db, id, user.id, to ? `Atendimento atribuído a ${to}` : 'Responsável removido');
+    }
+    if (patch.teamId !== undefined && patch.teamId !== conv.team_id) {
+      const to = patch.teamId === null ? null : (db.prepare('SELECT name FROM teams WHERE id = ?').get(patch.teamId) as Row).name;
+      addEvent(db, id, user.id, to ? `Equipe alterada para ${to}` : 'Equipe removida');
+    }
+    if (patch.status !== undefined && patch.status !== conv.status) {
+      addEvent(db, id, user.id, patch.status === 'resolved' ? `${user.name} resolveu a conversa`
+        : conv.status === 'resolved' ? `${user.name} reabriu a conversa` : `${user.name} devolveu a conversa para Aguardando`);
+    }
     audit(db, user.id, 'conversation.update', 'conversation', id, { from: { status: conv.status, assignee: conv.assignee_id, team: conv.team_id }, patch });
     emit({ type: 'conversation.updated', conversationId: id });
   }
@@ -281,7 +302,7 @@ export function listConversations(db: Db, user: SessionUser, f: ListFilters): Ro
   }
   if (f.q) {
     const like = `%${escapeLike(f.q)}%`;
-    where.push(`(cu.name LIKE ? ESCAPE '\\' OR cu.phone LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.kind != 'note' AND m.body LIKE ? ESCAPE '\\'))`);
+    where.push(`(cu.name LIKE ? ESCAPE '\\' OR cu.phone LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.kind IN ('text','template') AND m.body LIKE ? ESCAPE '\\'))`);
     params.push(like, like, like);
   }
 
@@ -345,4 +366,24 @@ export function metrics(db: Db, user: SessionUser, f: { from?: string; to?: stri
     perDay: [...perDay.entries()].sort().map(([day, count]) => ({ day, count })),
     perAgent: [...perAgent.entries()].map(([agent, count]) => ({ agent, count })).sort((a, b) => b.count - a.count),
   };
+}
+
+// ---------- busca dentro da conversa ----------
+
+/** Ids das mensagens que contêm o texto, na ordem da conversa. Respeita o acesso à conversa (404 se não puder ver). */
+export function searchInConversation(db: Db, user: SessionUser, conversationId: number, q: string): number[] {
+  const conv = getConversationFor(db, user, conversationId);
+  const rows = db.prepare(
+    `SELECT id FROM messages WHERE conversation_id = ? AND kind != 'event' AND body LIKE ? ESCAPE '\\' ORDER BY id LIMIT 200`,
+  ).all(conv.id, `%${escapeLike(q)}%`) as Row[];
+  return rows.map((r) => r.id as number);
+}
+
+// ---------- respostas rápidas ----------
+
+/** Atendente vê as respostas de todos e as das suas equipes; admin vê todas. */
+export function listQuickReplies(db: Db, user: SessionUser): Row[] {
+  const where = user.role === 'admin' ? '1=1'
+    : user.teamIds.length ? `(team_id IS NULL OR team_id IN (${user.teamIds.map(() => '?').join(',')}))` : 'team_id IS NULL';
+  return db.prepare(`SELECT * FROM quick_replies WHERE ${where} ORDER BY shortcut`).all(...(user.role === 'admin' ? [] : user.teamIds)) as Row[];
 }
