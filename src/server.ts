@@ -2,11 +2,19 @@ import { config } from './config.ts';
 import { openDb } from './db.ts';
 import { ensureFirstAdmin } from './auth.ts';
 import { buildApp } from './app.ts';
+import { makeMailer } from './mailer.ts';
 import { MockChannel, WhatsAppCloudChannel } from './channels/whatsapp.ts';
 
 const db = openDb(config.dbPath);
 const channel = config.whatsapp.mode === 'cloud' ? new WhatsAppCloudChannel(config.whatsapp) : new MockChannel();
-const app = await buildApp({ db, channel, logger: true });
+if (config.production && !config.publicUrl.startsWith('https://')) throw new Error('Em produção, PUBLIC_URL precisa começar com https://');
+const mailer = makeMailer(config);
+const app = await buildApp({ db, channel, mailer, logger: true });
+if (!(config.smtp.user && config.smtp.pass)) {
+  console.warn(`[cadastro] SMTP não configurado: e-mails de aprovação ${config.production ? 'NÃO serão enviados (use o painel de Administração)' : 'serão impressos neste console'}.`);
+} else {
+  console.log(`[cadastro] aprovações vão para ${config.approvalEmail}`);
+}
 
 const seeded = ensureFirstAdmin(db);
 if (seeded) {

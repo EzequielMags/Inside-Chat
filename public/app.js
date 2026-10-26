@@ -21,13 +21,16 @@ async function api(method, url, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && !url.includes('/auth/login')) { state.me = null; render(); throw new Error('Sessão expirada'); }
-  if (!res.ok) throw Object.assign(new Error(data.error || 'Erro'), { code: data.code });
+  const isAuthCall = url.startsWith('/api/auth/') || url === '/api/me';
+  if (res.status === 401 && !isAuthCall) { state.me = null; render(); throw new Error('Sua sessão expirou. Entre novamente.'); }
+  if (!res.ok) throw Object.assign(new Error(data.error || 'Algo deu errado. Tente de novo.'), { code: data.code, status: res.status });
   return data;
 }
 
 const STATUS = { open: 'Aberta', in_progress: 'Em andamento', resolved: 'Resolvida' };
+const USER_STATUS = { pending: 'Aguardando', approved: 'Ativo', rejected: 'Recusado' };
 const fmtTime = (iso) => new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+const fmtDay = (iso) => new Date(iso).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
 const fmtDur = (s) => {
   if (s == null) return '—';
   if (s < 90) return `${s}s`;
@@ -36,15 +39,65 @@ const fmtDur = (s) => {
   return `${(s / 86400).toFixed(1)} d`;
 };
 const fmtPhone = (p) => `+${p}`;
+const initials = (name) => (name.match(/\p{L}/gu) ? name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase() : '#');
 const opt = (value, label, sel) => h('option', { value, selected: sel }, label);
+const empty = (title, hint) => h('div', { class: 'empty' }, h('strong', {}, title), hint ? h('span', {}, hint) : null);
+const loading = (msg = 'Carregando…') => h('div', { class: 'loading', role: 'status' }, msg);
 
 const state = {
   me: null, users: [], teams: [], templates: [],
   filters: { q: '', status: '', assignee: '', teamId: '', from: '', to: '', weekend: '' },
-  list: [], current: null, tab: 'text', es: null,
+  list: [], current: null, tab: 'text', es: null, authMode: 'login',
 };
 
 const root = document.getElementById('app');
+
+// ---------- diálogo (substitui alert/prompt/confirm) ----------
+/**
+ * fields: [{ name, label, type: text|email|password|textarea|select|checkboxes, value, options, help, required }]
+ * onSubmit(values) pode lançar Error: a mensagem aparece no próprio diálogo.
+ */
+function askForm({ title, intro, fields = [], submit = 'Salvar', danger = false, onSubmit }) {
+  const dlg = h('dialog', { 'aria-labelledby': 'dlg-title' });
+  const getters = {};
+  const err = h('div', { class: 'err', role: 'alert' });
+  const build = (f) => {
+    let input;
+    if (f.type === 'textarea') { input = h('textarea', { rows: 3, required: f.required }); input.value = f.value ?? ''; getters[f.name] = () => input.value; }
+    else if (f.type === 'select') { input = h('select', {}, f.options.map(([v, l]) => opt(v, l, String(v) === String(f.value)))); getters[f.name] = () => input.value; }
+    else if (f.type === 'checkboxes') {
+      const boxes = f.options.map(([v, l]) => ({ v, el: h('input', { type: 'checkbox', checked: (f.value ?? []).includes(v) }), l }));
+      getters[f.name] = () => boxes.filter((b) => b.el.checked).map((b) => b.v);
+      return h('fieldset', { class: 'field' }, h('legend', {}, f.label),
+        boxes.length ? boxes.map((b) => h('label', {}, b.el, ` ${b.l}`)) : h('span', { class: 'help' }, 'Nenhuma equipe criada ainda.'));
+    } else {
+      input = h('input', { type: f.type ?? 'text', required: f.required, autocomplete: f.type === 'password' ? 'new-password' : 'off', minlength: f.minlength });
+      input.value = f.value ?? ''; getters[f.name] = () => input.value;
+    }
+    return h('label', { class: 'field' }, f.label, input, f.help ? h('span', { class: 'help' }, f.help) : null);
+  };
+  const okBtn = h('button', { class: `btn ${danger ? 'danger' : ''}`, type: 'submit' }, submit);
+  const form = h('form', {
+    method: 'dialog',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      err.textContent = ''; okBtn.disabled = true;
+      try {
+        await onSubmit(Object.fromEntries(Object.entries(getters).map(([k, g]) => [k, g()])));
+        dlg.close();
+      } catch (x) { err.textContent = x.message; okBtn.disabled = false; }
+    },
+  },
+  h('h3', { id: 'dlg-title' }, title), intro ? h('p', { class: 'muted' }, intro) : null, fields.map(build), err,
+  h('div', { class: 'actions' }, h('button', { class: 'btn ghost', type: 'button', onclick: () => dlg.close() }, 'Cancelar'), okBtn));
+  dlg.append(form);
+  dlg.addEventListener('close', () => dlg.remove());
+  document.body.append(dlg);
+  dlg.showModal();
+  dlg.querySelector('input, textarea, select')?.focus();
+}
+
+const confirmAction = (title, intro, submit, onSubmit) => askForm({ title, intro, submit, danger: true, onSubmit });
 
 // ---------- roteamento ----------
 const route = () => {
@@ -54,6 +107,8 @@ const route = () => {
 window.addEventListener('hashchange', () => render());
 
 async function boot() {
+  if (location.pathname === '/aprovar') return renderApproval();
+  if (location.pathname === '/verificar') return renderVerify();
   try { state.me = await api('GET', '/api/me'); } catch { state.me = null; }
   if (state.me) await loadRefs();
   render();
@@ -84,41 +139,165 @@ function connectEvents() {
 }
 
 function render() {
+  if (location.pathname === '/aprovar' || location.pathname === '/verificar') return;
   root.replaceChildren();
-  if (!state.me) { if (state.es) { state.es.close(); state.es = null; } return root.append(loginView()); }
+  if (!state.me) {
+    if (state.es) { state.es.close(); state.es = null; }
+    return root.append(authView());
+  }
   const { page } = route();
-  const main = h('div', { class: 'main' });
+  const main = h('main', { class: 'main' });
   root.append(h('div', { class: 'shell' }, sidebar(page), main));
   const views = { inbox: inboxView, customers: customersView, metrics: metricsView, admin: adminView };
   (views[page] ?? inboxView)(main);
 }
 
-// ---------- login e layout ----------
-function loginView() {
+// ---------- entrar / cadastrar ----------
+function authShell(content) {
+  return h('div', { class: 'auth' },
+    h('section', { class: 'auth-panel', 'aria-hidden': 'true' },
+      h('div', { class: 'brand' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Cordial')),
+      h('h2', {}, 'Atendimento organizado, equipe alinhada.'),
+      h('ul', {}, h('li', {}, 'Uma caixa de entrada para todo o time'), h('li', {}, 'Histórico do cliente sempre à mão'), h('li', {}, 'Notas internas que o cliente nunca vê'))),
+    h('main', { class: 'auth-main' }, h('div', { class: 'auth-card' },
+      h('div', { class: 'brand brand-mobile' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Cordial')), content)));
+}
+
+function authView() {
+  const mode = state.authMode;
+  const switchTo = (m) => { state.authMode = m; render(); };
+  if (mode === 'signup-done') {
+    return authShell([
+      h('div', { class: 'notice ok', role: 'status' }, h('strong', {}, 'Confirme seu e-mail'),
+        'Enviamos um link para o e-mail que você informou. Ao abri-lo, você confirma que é você e escolhe sua senha. Depois o administrador analisa o pedido e você é avisado por e-mail quando o acesso for aprovado.'),
+      h('p', { class: 'help' }, 'Não chegou? Veja a caixa de spam. Você pode repetir o cadastro após 5 minutos para receber outro link (até 3 vezes).'),
+      h('p', { class: 'auth-switch' }, h('button', { onclick: () => switchTo('login') }, 'Voltar para o login')),
+    ]);
+  }
   const err = h('div', { class: 'err', role: 'alert' });
-  const email = h('input', { type: 'email', placeholder: 'E-mail', autocomplete: 'username', required: true });
-  const pass = h('input', { type: 'password', placeholder: 'Senha', autocomplete: 'current-password', required: true });
-  return h('div', { class: 'login' }, h('form', {
+  const notice = h('div');
+  const submit = h('button', { class: 'btn', type: 'submit' }, mode === 'login' ? 'Entrar' : 'Pedir acesso');
+  const name = h('input', { type: 'text', autocomplete: 'name', required: true, minlength: 2, maxlength: 120 });
+  const email = h('input', { type: 'email', autocomplete: 'username', required: true, maxlength: 200 });
+  const pass = h('input', { type: 'password', autocomplete: 'current-password', required: true });
+  const field = (label, input, help) => h('label', { class: 'field' }, label, input, help ? h('span', { class: 'help' }, help) : null);
+
+  const form = h('form', {
     onsubmit: async (e) => {
       e.preventDefault();
+      err.textContent = ''; notice.replaceChildren(); submit.disabled = true;
       try {
-        await api('POST', '/api/auth/login', { email: email.value, password: pass.value });
-        await boot();
-      } catch (x) { err.textContent = x.message; }
+        if (mode === 'login') {
+          await api('POST', '/api/auth/login', { email: email.value, password: pass.value });
+          await boot();
+        } else {
+          await api('POST', '/api/auth/signup', { name: name.value, email: email.value });
+          switchTo('signup-done');
+        }
+      } catch (x) {
+        if (x.code === 'pending') notice.replaceChildren(h('div', { class: 'notice warn', role: 'alert' }, h('strong', {}, 'Aguardando aprovação'), x.message, ' Você será avisado por e-mail.'));
+        else if (x.code === 'rejected') notice.replaceChildren(h('div', { class: 'notice bad', role: 'alert' }, x.message));
+        else err.textContent = x.message;
+        submit.disabled = false;
+      }
     },
-  }, h('img', { src: '/logo.svg', alt: '' }), h('h1', {}, 'Cordial'),
-  h('p', { class: 'muted' }, 'Entre para atender seus clientes.'), email, pass, err, h('button', { class: 'btn' }, 'Entrar')));
+  },
+  mode === 'signup' ? field('Nome', name) : null,
+  field('E-mail', email), mode === 'login' ? field('Senha', pass) : null, notice, err, submit);
+
+  return authShell([
+    h('div', {}, h('h1', {}, mode === 'login' ? 'Entrar no Cordial' : 'Criar acesso'),
+      h('p', { class: 'muted' }, mode === 'login' ? 'Use o e-mail e a senha da sua conta.' : 'Você confirma seu e-mail e escolhe a senha pelo link que enviaremos. O acesso só é liberado depois que o administrador aprovar.')),
+    form,
+    h('p', { class: 'auth-switch' }, mode === 'login' ? 'Ainda não tem acesso? ' : 'Já tem conta? ',
+      h('button', { onclick: () => switchTo(mode === 'login' ? 'signup' : 'login') }, mode === 'login' ? 'Pedir acesso' : 'Entrar')),
+  ]);
+}
+
+// Página aberta pelo link do e-mail do administrador (/aprovar?t=...).
+async function renderApproval() {
+  root.replaceChildren();
+  const token = new URLSearchParams(location.search).get('t') ?? '';
+  const body = h('div', {}, loading());
+  root.append(authShell([h('h1', {}, 'Aprovar cadastro'), body]));
+  const done = (cls, title, msg) => body.replaceChildren(
+    h('div', { class: `notice ${cls}`, role: 'status' }, h('strong', {}, title), msg),
+    h('p', { class: 'auth-switch' }, h('a', { href: '/' }, 'Ir para o Cordial')));
+  let info;
+  try { info = await api('GET', `/api/auth/approval?t=${encodeURIComponent(token)}`); }
+  catch (e) {
+    done('bad', 'Link indisponível', e.status === 410 ? 'Este link é inválido, expirou ou já foi usado. Se o cadastro ainda estiver pendente, peça um novo link: ele será enviado ao e-mail do aprovador.' : e.message);
+    if (e.status !== 410) return;
+    const msg = h('p', { class: 'help', role: 'status' });
+    const btn = h('button', { class: 'btn ghost', onclick: async () => {
+      btn.disabled = true;
+      try { await api('POST', '/api/auth/approval/resend', { token }); msg.textContent = 'Pedido enviado. Se houver um cadastro pendente, o aprovador receberá um novo link por e-mail.'; }
+      catch (err) { msg.textContent = err.message; btn.disabled = false; }
+    } }, 'Pedir novo link');
+    return body.firstChild.after(h('div', { class: 'row-actions' }, btn), msg);
+  }
+
+  const err = h('div', { class: 'err', role: 'alert' });
+  const decide = (decision) => async (ev) => {
+    ev.target.closest('.approve-card').querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    try {
+      await api('POST', '/api/auth/approval', { token, decision });
+      done(decision === 'approve' ? 'ok' : 'warn', decision === 'approve' ? 'Acesso aprovado' : 'Cadastro recusado',
+        decision === 'approve' ? `${info.name} já pode entrar e foi avisado por e-mail.` : `${info.name} não terá acesso.`);
+    } catch (e) { err.textContent = e.message; ev.target.closest('.approve-card').querySelectorAll('button').forEach((b) => { b.disabled = false; }); }
+  };
+  body.replaceChildren(h('div', { class: 'approve-card' },
+    h('p', {}, 'Alguém pediu acesso ao Cordial como atendente e já confirmou que controla o e-mail abaixo. Confira os dados antes de decidir.'),
+    h('dl', {}, h('dt', {}, 'Nome'), h('dd', {}, info.name), h('dt', {}, 'E-mail'), h('dd', {}, info.email), h('dt', {}, 'Pedido em'), h('dd', {}, fmtTime(info.requestedAt))),
+    err,
+    h('div', { class: 'row-actions' }, h('button', { class: 'btn', onclick: decide('approve') }, 'Aprovar acesso'), h('button', { class: 'btn ghost', onclick: decide('reject') }, 'Recusar')),
+    h('p', { class: 'help' }, 'Se você não reconhece este pedido, recuse.')));
+}
+
+// Página aberta pelo link enviado ao solicitante (/verificar?t=...). A confirmação é um POST (um clique),
+// para que leitores automáticos de e-mail que "abrem" links não confirmem sozinhos.
+async function renderVerify() {
+  root.replaceChildren();
+  const token = new URLSearchParams(location.search).get('t') ?? '';
+  const body = h('div', {}, loading());
+  root.append(authShell([h('h1', {}, 'Confirmar e-mail'), body]));
+  const home = h('p', { class: 'auth-switch' }, h('a', { href: '/' }, 'Ir para o Cordial'));
+  let info;
+  try { info = await api('GET', `/api/auth/verify?t=${encodeURIComponent(token)}`); }
+  catch (e) {
+    return body.replaceChildren(h('div', { class: 'notice bad', role: 'alert' }, h('strong', {}, 'Link indisponível'),
+      e.status === 410 ? 'Este link é inválido, expirou ou já foi usado. Se ainda não confirmou, refaça o cadastro para receber outro.' : e.message), home);
+  }
+  const err = h('div', { class: 'err', role: 'alert' });
+  const pass = h('input', { type: 'password', autocomplete: 'new-password' });
+  const pass2 = h('input', { type: 'password', autocomplete: 'new-password' });
+  const btn = h('button', { class: 'btn', onclick: async () => {
+    err.textContent = '';
+    if (!pass.value) { err.textContent = 'Informe a senha.'; return; }
+    if (pass.value !== pass2.value) { err.textContent = 'As senhas não conferem.'; return; }
+    btn.disabled = true;
+    try {
+      await api('POST', '/api/auth/verify', { token, password: pass.value });
+      body.replaceChildren(h('div', { class: 'notice ok', role: 'status' }, h('strong', {}, 'E-mail confirmado'),
+        'Avisamos o administrador. Você receberá um e-mail quando o acesso for aprovado.'), home);
+    } catch (e) { err.textContent = e.message; btn.disabled = false; }
+  } }, 'Confirmar e criar senha');
+  const field = (label, input, help) => h('label', { class: 'field' }, label, input, help ? h('span', { class: 'help' }, help) : null);
+  body.replaceChildren(h('div', { class: 'approve-card' }, h('p', {}, 'Confirme que o pedido de acesso ao Cordial foi feito por você e escolha sua senha.'),
+    h('dl', {}, h('dt', {}, 'Nome'), h('dd', {}, info.name), h('dt', {}, 'E-mail'), h('dd', {}, info.email)),
+    field('Senha', pass), field('Repita a senha', pass2), err, btn,
+    h('p', { class: 'help' }, 'Se não foi você, feche esta página.')));
 }
 
 function sidebar(page) {
-  const link = (p, label) => h('a', { href: `#/${p}`, class: page === p ? 'active' : '' }, label);
+  const link = (p, label) => h('a', { href: `#/${p}`, class: page === p ? 'active' : '', 'aria-current': page === p ? 'page' : null }, label);
   return h('aside', { class: 'side' },
-    h('div', { class: 'brand' }, h('img', { src: '/logo.svg', alt: '' }), 'Cordial'),
-    h('nav', { class: 'nav' }, link('inbox', 'Caixa de entrada'), link('customers', 'Clientes'), link('metrics', 'Indicadores'),
+    h('div', { class: 'brand' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Cordial')),
+    h('nav', { class: 'nav', 'aria-label': 'Principal' }, link('inbox', 'Caixa de entrada'), link('customers', 'Clientes'), link('metrics', 'Indicadores'),
       state.me.role === 'admin' ? link('admin', 'Administração') : null),
     h('div', { class: 'who' },
-      h('div', {}, h('strong', {}, state.me.name), h('div', { class: 'muted' }, state.me.role === 'admin' ? 'Administrador' : 'Atendente')),
-      h('button', { class: 'btn ghost small', onclick: async () => { await api('POST', '/api/auth/logout'); state.me = null; render(); } }, 'Sair')),
+      h('div', {}, h('div', { class: 'name' }, state.me.name), h('div', { class: 'muted' }, state.me.role === 'admin' ? 'Administrador' : 'Atendente')),
+      h('button', { class: 'btn ghost small', onclick: async () => { await api('POST', '/api/auth/logout'); state.me = null; state.authMode = 'login'; render(); } }, 'Sair')),
   );
 }
 
@@ -129,128 +308,144 @@ function inboxView(main) {
   main.append(wrap);
   const f = state.filters;
   const bind = (key, el) => { el.addEventListener('change', () => { f[key] = el.value; refreshList(); }); return el; };
-  const search = h('input', { type: 'search', placeholder: 'Buscar nome, telefone ou texto', value: f.q, class: 'wide', 'aria-label': 'Buscar' });
+  const search = h('input', { type: 'search', placeholder: 'Buscar nome, telefone ou texto', value: f.q, class: 'wide', 'aria-label': 'Buscar conversas' });
   let t; search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { f.q = search.value; refreshList(); }, 250); });
   const sel = (key, label, options) => h('label', {}, label, bind(key, h('select', {}, options.map(([v, l]) => opt(v, l, f[key] === String(v))))));
+  const activeUsers = state.users.filter((u) => u.active);
   const filters = h('div', { class: 'filters' }, search,
     sel('status', 'Status', [['', 'Todos'], ...Object.entries(STATUS)]),
-    sel('assignee', 'Responsável', [['', 'Todos'], ['me', 'Eu'], ['none', 'Sem responsável'], ...state.users.filter((u) => u.active).map((u) => [u.id, u.name])]),
-    sel('teamId', 'Equipe', [['', 'Todas'], ...state.teams.map((t) => [t.id, t.name])]),
+    sel('assignee', 'Responsável', [['', 'Todos'], ['me', 'Eu'], ['none', 'Sem responsável'], ...activeUsers.map((u) => [u.id, u.name])]),
+    sel('teamId', 'Equipe', [['', 'Todas'], ...state.teams.map((x) => [x.id, x.name])]),
     sel('weekend', 'Plantão', [['', 'Qualquer dia'], ['both', 'Sáb + Dom'], ['sat', 'Sábado'], ['sun', 'Domingo']]),
     h('label', {}, 'De', bind('from', h('input', { type: 'date', value: f.from }))),
     h('label', {}, 'Até', bind('to', h('input', { type: 'date', value: f.to }))),
   );
-  const newBtn = h('button', { class: 'btn small ghost', onclick: startConversation }, 'Nova conversa');
-  const simBtn = state.me.role === 'admin' && state.me.waMode === 'mock'
-    ? h('button', { class: 'btn small ghost', onclick: simulate, title: 'Modo desenvolvimento' }, 'Simular cliente') : null;
+  const tools = h('div', { class: 'filters' }, h('div', { class: 'tools' },
+    h('button', { class: 'btn small ghost', onclick: startConversation }, 'Nova conversa'),
+    state.me.role === 'admin' && state.me.waMode === 'mock'
+      ? h('button', { class: 'btn small ghost', onclick: simulate, title: 'Disponível só em modo de desenvolvimento' }, 'Simular cliente') : null));
   wrap.append(
-    h('section', { class: 'list-col' }, filters, h('div', { class: 'filters' }, newBtn, simBtn), h('div', { class: 'items', id: 'items' })),
-    h('section', { class: 'thread', id: 'thread' }, h('div', { class: 'empty' }, 'Selecione uma conversa.')),
+    h('section', { class: 'list-col', 'aria-label': 'Conversas' }, filters, tools, h('div', { class: 'items', id: 'items' }, loading())),
+    h('section', { class: 'thread', id: 'thread', 'aria-label': 'Conversa' }, empty('Selecione uma conversa', 'Escolha uma na lista ou inicie uma nova.')),
   );
   refreshList();
   if (arg) openConversation(Number(arg));
 }
 
 async function refreshList() {
-  const qs = new URLSearchParams(Object.entries(state.filters).filter(([, v]) => v));
-  state.list = await api('GET', `/api/conversations?${qs}`);
   const box = document.getElementById('items');
   if (!box) return;
+  const qs = new URLSearchParams(Object.entries(state.filters).filter(([, v]) => v));
+  try { state.list = await api('GET', `/api/conversations?${qs}`); }
+  catch (e) { box.replaceChildren(h('div', { class: 'err', role: 'alert' }, e.message)); return; }
   const selected = Number(route().arg);
   box.replaceChildren(...(state.list.length ? state.list.map((c) => h('button', {
-    class: `item ${c.id === selected ? 'sel' : ''}`, onclick: () => { location.hash = `#/inbox/${c.id}`; },
+    class: `item ${c.id === selected ? 'sel' : ''}`, 'aria-current': c.id === selected ? 'true' : null, onclick: () => { location.hash = `#/inbox/${c.id}`; },
   },
-  h('div', { class: 'row' }, h('span', { class: 'name' }, c.customer_name), c.unread_count ? h('span', { class: 'unread' }, c.unread_count) : null),
-  h('div', { class: 'prev' }, c.last_preview || '—'),
-  h('div', { class: 'row meta' }, h('span', { class: `badge ${c.status}` }, STATUS[c.status]), h('span', {}, c.assignee_name ?? 'Sem responsável'), h('span', {}, fmtTime(c.last_message_at)))))
-    : [h('div', { class: 'empty' }, 'Nenhuma conversa com esses filtros.')]));
+  h('div', { class: 'avatar', 'aria-hidden': 'true' }, initials(c.customer_name)),
+  h('div', {},
+    h('div', { class: 'row' }, h('span', { class: 'name' }, c.customer_name), c.unread_count ? h('span', { class: 'unread', 'aria-label': `${c.unread_count} não lidas` }, c.unread_count) : null),
+    h('div', { class: 'prev' }, c.last_preview || '—'),
+    h('div', { class: 'row meta' }, h('span', { class: `badge ${c.status}` }, STATUS[c.status]), h('span', {}, c.assignee_name ?? 'Sem responsável'), h('span', {}, fmtTime(c.last_message_at))))))
+    : [empty('Nenhuma conversa com esses filtros', 'Ajuste os filtros ou aguarde novas mensagens.')]));
 }
 
 async function openConversation(id, keepComposer = false) {
   const thread = document.getElementById('thread');
   if (!thread) return;
+  if (!keepComposer) thread.replaceChildren(loading());
   let data;
   try { data = await api('GET', `/api/conversations/${id}`); }
-  catch (e) { thread.replaceChildren(h('div', { class: 'empty' }, e.message)); return; }
+  catch (e) { thread.replaceChildren(empty('Não foi possível abrir', e.message)); return; }
   state.current = data;
-  if (data.conversation.unread_count) { api('POST', `/api/conversations/${id}/read`).then(refreshList); }
+  if (data.conversation.unread_count) { api('POST', `/api/conversations/${id}/read`).then(refreshList).catch(() => {}); }
   const draft = keepComposer ? document.getElementById('draft')?.value : '';
   const { conversation: c, customer } = data;
-  const patch = async (body) => { try { await api('PATCH', `/api/conversations/${id}`, body); } catch (e) { alert(e.message); } };
+  const ctlErr = h('div', { class: 'err', role: 'alert' });
+  const patch = async (body) => { ctlErr.textContent = ''; try { await api('PATCH', `/api/conversations/${id}`, body); } catch (e) { ctlErr.textContent = e.message; } };
+  const activeUsers = state.users.filter((u) => u.active);
 
   const head = h('div', { class: 'thread-head' },
-    h('div', {},
-      h('button', { class: 'btn ghost small', onclick: () => { location.hash = '#/inbox'; } }, '←'), ' ',
-      h('a', { href: `#/customers/${customer.id}` }, h('strong', {}, customer.name)),
-      h('div', { class: 'muted' }, fmtPhone(customer.phone))),
+    h('div', { class: 'who' },
+      h('button', { class: 'btn ghost small back', 'aria-label': 'Voltar para a lista', onclick: () => { location.hash = '#/inbox'; } }, '←'),
+      h('div', { class: 'avatar', 'aria-hidden': 'true' }, initials(customer.name)),
+      h('div', {}, h('h3', {}, h('a', { href: `#/customers/${customer.id}` }, customer.name)), h('div', { class: 'muted' }, fmtPhone(customer.phone)))),
     h('div', { class: 'ctl' },
       h('select', { 'aria-label': 'Status', onchange: (e) => patch({ status: e.target.value }) }, Object.entries(STATUS).map(([v, l]) => opt(v, l, c.status === v))),
       h('select', { 'aria-label': 'Responsável', onchange: (e) => patch({ assigneeId: e.target.value ? Number(e.target.value) : null }) },
-        opt('', 'Sem responsável', !c.assignee_id), state.users.filter((u) => u.active).map((u) => opt(u.id, u.name, c.assignee_id === u.id))),
+        opt('', 'Sem responsável', !c.assignee_id), activeUsers.map((u) => opt(u.id, u.name, c.assignee_id === u.id))),
       h('select', { 'aria-label': 'Equipe', onchange: (e) => patch({ teamId: e.target.value ? Number(e.target.value) : null }) },
-        opt('', 'Sem equipe', !c.team_id), state.teams.map((t) => opt(t.id, t.name, c.team_id === t.id)))),
+        opt('', 'Sem equipe', !c.team_id), state.teams.map((x) => opt(x.id, x.name, c.team_id === x.id)))),
+    ctlErr,
   );
 
-  const msgs = h('div', { class: 'msgs' }, data.messages.map((m) => {
+  let lastDay = '';
+  const items = [];
+  for (const m of data.messages) {
+    const day = new Date(m.created_at).toDateString();
+    if (day !== lastDay) { lastDay = day; items.push(h('div', { class: 'day' }, fmtDay(m.created_at))); }
     const cls = m.kind === 'note' ? 'note' : m.direction === 'out' ? 'out' : '';
     const who = m.kind === 'note' ? `Nota interna · ${m.sender_name}` : m.direction === 'out' ? (m.sender_name ?? '') : '';
-    const st = m.delivery_status === 'failed' ? ` · falhou: ${m.error ?? ''}` : m.delivery_status === 'read' ? ' · lida' : m.delivery_status === 'delivered' ? ' · entregue' : '';
-    return h('div', { class: `msg ${cls}` }, m.body,
-      h('div', { class: 'info' }, [who, m.template_name ? `template ${m.template_name}` : '', fmtTime(m.created_at) + st].filter(Boolean).join(' · ')));
-  }));
+    const time = new Date(m.created_at).toLocaleTimeString('pt-BR', { timeStyle: 'short' });
+    const st = m.delivery_status === 'failed' ? ` · não entregue${m.error ? `: ${m.error}` : ''}` : m.delivery_status === 'read' ? ' · lida' : m.delivery_status === 'delivered' ? ' · entregue' : '';
+    items.push(h('div', { class: `msg ${cls}` }, m.body,
+      h('div', { class: `info ${m.delivery_status === 'failed' ? 'failed' : ''}` }, [who, m.template_name ? `template ${m.template_name}` : '', time + st].filter(Boolean).join(' · '))));
+  }
+  const msgs = h('div', { class: 'msgs', tabindex: '0', 'aria-label': 'Mensagens' }, items);
 
   const win = data.window;
   const banner = !win.open && c.status !== 'resolved'
-    ? h('div', { class: 'banner' }, 'A janela de 24 h do WhatsApp está encerrada: só é possível enviar um template aprovado.') : null;
+    ? h('div', { class: 'banner', role: 'status' }, 'A janela de 24 h do WhatsApp está encerrada: só é possível enviar um template aprovado.') : null;
   if (!win.open && state.tab === 'text') state.tab = 'template';
 
   thread.replaceChildren(head, msgs, banner, c.status === 'resolved'
-    ? h('div', { class: 'banner' }, 'Conversa resolvida. Reabra para responder (notas internas continuam disponíveis).') : null,
+    ? h('div', { class: 'banner', role: 'status' }, 'Conversa resolvida. Reabra para responder (notas internas continuam disponíveis).') : null,
   composer(id, win, draft));
   msgs.scrollTop = msgs.scrollHeight;
 }
 
 function composer(id, win, draft = '') {
   const err = h('div', { class: 'err', role: 'alert' });
-  const tabs = h('div', { class: 'tabs' });
+  const tabs = h('div', { class: 'tabs', role: 'tablist' });
   const body = h('div');
-  const send = async (payload) => {
-    err.textContent = '';
+  const send = async (payload, btn) => {
+    err.textContent = ''; if (btn) btn.disabled = true;
     try { await api('POST', `/api/conversations/${id}/messages`, payload); await openConversation(id); await refreshList(); }
-    catch (e) { err.textContent = e.message; }
+    catch (e) { err.textContent = e.message; if (btn) btn.disabled = false; }
   };
   const textBox = (placeholder, kind) => {
-    const ta = h('textarea', { id: 'draft', rows: 3, placeholder, maxlength: 4096 }); ta.value = draft;
+    const ta = h('textarea', { id: 'draft', rows: 3, placeholder, maxlength: 4096, 'aria-label': kind === 'note' ? 'Nota interna' : 'Mensagem' }); ta.value = draft;
+    const go = h('button', { class: 'btn', onclick: () => ta.value.trim() && send({ kind, body: ta.value }, go) }, kind === 'note' ? 'Salvar nota' : 'Enviar');
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) go.click(); });
-    const go = h('button', { class: 'btn', onclick: () => ta.value.trim() && send({ kind, body: ta.value }) }, kind === 'note' ? 'Salvar nota' : 'Enviar');
-    return [ta, h('div', { class: 'actions' }, h('span', { class: 'muted' }, 'Ctrl+Enter envia'), go)];
+    return [ta, h('div', { class: 'actions' }, h('span', { class: 'help' }, 'Ctrl+Enter envia'), go)];
   };
   const tplBox = () => {
     const tpls = state.templates.filter((t) => t.active);
-    if (!tpls.length) return [h('div', { class: 'muted' }, 'Nenhum template cadastrado. Peça a um administrador.')];
-    const sel = h('select', {}, tpls.map((t) => opt(t.id, `${t.name} (${t.language})`)));
-    const preview = h('div', { class: 'msg out' });
+    if (!tpls.length) return [empty('Nenhum template cadastrado', 'Peça a um administrador para cadastrar os templates aprovados na Meta.')];
+    const sel = h('select', { 'aria-label': 'Template' }, tpls.map((t) => opt(t.id, `${t.name} (${t.language})`)));
+    const preview = h('div', { class: 'msg out', 'aria-label': 'Pré-visualização' });
     const fields = h('div', { class: 'form-row' });
-    const upd = () => {
-      const t = tpls.find((x) => x.id === Number(sel.value));
-      const n = new Set([...t.body.matchAll(/\{\{(\d+)\}\}/g)].map((m) => m[1])).size;
-      fields.replaceChildren(...Array.from({ length: n }, (_, i) => {
-        const inp = h('input', { placeholder: `{{${i + 1}}}`, 'aria-label': `Parâmetro ${i + 1}`, 'data-p': '1' });
-        inp.addEventListener('input', paint); return inp;
-      }));
-      paint();
-    };
     const params = () => [...fields.querySelectorAll('input')].map((i) => i.value);
     const paint = () => {
       const t = tpls.find((x) => x.id === Number(sel.value));
       const p = params(); preview.textContent = t.body.replace(/\{\{(\d+)\}\}/g, (_, n) => p[n - 1] || `{{${n}}}`);
     };
+    const upd = () => {
+      const t = tpls.find((x) => x.id === Number(sel.value));
+      const n = new Set([...t.body.matchAll(/\{\{(\d+)\}\}/g)].map((m) => m[1])).size;
+      fields.replaceChildren(...Array.from({ length: n }, (_, i) => {
+        const inp = h('input', { placeholder: `Valor de {{${i + 1}}}`, 'aria-label': `Parâmetro ${i + 1}` });
+        inp.addEventListener('input', paint); return inp;
+      }));
+      paint();
+    };
     sel.addEventListener('change', upd); upd();
-    return [sel, fields, preview, h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => send({ kind: 'template', templateId: Number(sel.value), params: params() }) }, 'Enviar template'))];
+    const go = h('button', { class: 'btn', onclick: () => send({ kind: 'template', templateId: Number(sel.value), params: params() }, go) }, 'Enviar template');
+    return [sel, fields, preview, h('div', { class: 'actions' }, go)];
   };
   const draw = () => {
     tabs.replaceChildren(...[['text', 'Responder'], ['template', 'Template'], ['note', 'Nota interna']].map(([k, l]) =>
-      h('button', { class: state.tab === k ? 'on' : '', onclick: () => { state.tab = k; draw(); } }, l)));
+      h('button', { class: state.tab === k ? 'on' : '', role: 'tab', 'aria-selected': state.tab === k ? 'true' : 'false', onclick: () => { state.tab = k; draw(); } }, l)));
     const content = state.tab === 'note' ? textBox('Nota visível só para a equipe (não é enviada ao cliente)', 'note')
       : state.tab === 'template' ? tplBox()
         : win.open ? textBox('Escreva sua resposta', 'text') : [h('div', { class: 'muted' }, 'Janela de 24 h encerrada. Use a aba Template.')];
@@ -260,19 +455,21 @@ function composer(id, win, draft = '') {
   return h('div', { class: 'composer' }, tabs, body, err);
 }
 
-async function startConversation() {
-  const phone = prompt('Telefone do cliente (DDI+DDD+número), ex.: 5511999990000');
-  if (!phone) return;
-  const name = prompt('Nome do cliente (opcional)') || undefined;
-  try { const { id } = await api('POST', '/api/conversations', { phone, name }); state.tab = 'template'; location.hash = `#/inbox/${id}`; }
-  catch (e) { alert(e.message); }
+function startConversation() {
+  askForm({
+    title: 'Nova conversa', intro: 'Como o cliente ainda não escreveu, o primeiro contato deve ser um template aprovado.', submit: 'Criar',
+    fields: [{ name: 'phone', label: 'Telefone', required: true, help: 'DDI + DDD + número, ex.: 5511999990000' }, { name: 'name', label: 'Nome (opcional)' }],
+    onSubmit: async (v) => { const { id } = await api('POST', '/api/conversations', { phone: v.phone, name: v.name || undefined }); state.tab = 'template'; location.hash = `#/inbox/${id}`; },
+  });
 }
 
-async function simulate() {
-  const phone = prompt('Telefone do cliente simulado', '5511999990000');
-  const text = phone && prompt('Mensagem do cliente', 'Olá, preciso de ajuda!');
-  if (!text) return;
-  try { await api('POST', '/api/dev/simulate-inbound', { phone, name: 'Cliente Simulado', text }); } catch (e) { alert(e.message); }
+function simulate() {
+  askForm({
+    title: 'Simular mensagem de cliente', intro: 'Apenas para testes locais; nada passa pela Meta.', submit: 'Simular',
+    fields: [{ name: 'phone', label: 'Telefone', value: '5511999990000', required: true }, { name: 'name', label: 'Nome', value: 'Cliente Simulado' },
+      { name: 'text', label: 'Mensagem', type: 'textarea', value: 'Olá, preciso de ajuda!', required: true }],
+    onSubmit: (v) => api('POST', '/api/dev/simulate-inbound', { phone: v.phone, name: v.name || undefined, text: v.text }),
+  });
 }
 
 // ---------- clientes ----------
@@ -280,111 +477,168 @@ async function customersView(main) {
   const { arg } = route();
   if (arg) return customerDetail(main, Number(arg));
   const tbody = h('tbody');
+  const holder = h('div', {}, loading());
   const search = h('input', { type: 'search', placeholder: 'Buscar por nome ou telefone', 'aria-label': 'Buscar clientes' });
   const load = async () => {
-    const rows = await api('GET', `/api/customers?q=${encodeURIComponent(search.value)}`);
-    tbody.replaceChildren(...rows.map((r) => h('tr', {},
-      h('td', {}, h('a', { href: `#/customers/${r.id}` }, r.name)), h('td', {}, fmtPhone(r.phone)), h('td', {}, String(r.conversations)))));
+    try {
+      const rows = await api('GET', `/api/customers?q=${encodeURIComponent(search.value)}`);
+      tbody.replaceChildren(...rows.map((r) => h('tr', {},
+        h('td', {}, h('a', { href: `#/customers/${r.id}` }, r.name)), h('td', {}, fmtPhone(r.phone)), h('td', {}, String(r.conversations)))));
+      holder.replaceChildren(rows.length
+        ? h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Nome'), h('th', {}, 'Telefone'), h('th', {}, 'Conversas'))), tbody))
+        : empty('Nenhum cliente encontrado', 'Clientes aparecem aqui quando enviam a primeira mensagem.'));
+    } catch (e) { holder.replaceChildren(h('div', { class: 'err', role: 'alert' }, e.message)); }
   };
   let t; search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 250); });
-  main.append(h('div', { class: 'page' }, h('h2', {}, 'Clientes'), search, h('div', { class: 'form-row' }),
-    h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Nome'), h('th', {}, 'Telefone'), h('th', {}, 'Conversas'))), tbody)));
+  main.append(h('div', { class: 'page' }, h('h2', {}, 'Clientes'), search, h('div', { class: 'form-row' }), holder));
   load();
 }
 
 async function customerDetail(main, id) {
-  const { customer, conversations } = await api('GET', `/api/customers/${id}`);
-  const name = h('input', { value: customer.name, 'aria-label': 'Nome' });
-  const notes = h('textarea', { rows: 4, 'aria-label': 'Observações' }); notes.value = customer.notes;
-  const msg = h('span', { class: 'muted' });
-  main.append(h('div', { class: 'page' },
+  const page = h('div', { class: 'page' }, loading());
+  main.append(page);
+  let data;
+  try { data = await api('GET', `/api/customers/${id}`); }
+  catch (e) { page.replaceChildren(h('a', { href: '#/customers' }, '← Clientes'), empty('Cliente não encontrado', e.message)); return; }
+  const { customer, conversations } = data;
+  const name = h('input', { value: customer.name, 'aria-label': 'Nome', maxlength: 120 });
+  const notes = h('textarea', { rows: 4, 'aria-label': 'Observações', maxlength: 4000 }); notes.value = customer.notes;
+  const msg = h('span', { role: 'status', class: 'muted' });
+  page.replaceChildren(
     h('a', { href: '#/customers' }, '← Clientes'), h('h2', {}, customer.name),
     h('p', { class: 'muted' }, `${fmtPhone(customer.phone)} · cliente desde ${fmtTime(customer.created_at)}`),
-    h('div', { class: 'section' }, h('label', {}, 'Nome', name), h('div', {}, 'Observações sobre o cliente'), notes,
+    h('div', { class: 'section' },
+      h('label', { class: 'field' }, 'Nome', name), h('label', { class: 'field' }, 'Observações sobre o cliente', notes),
       h('div', { class: 'form-row' }, h('button', { class: 'btn', onclick: async () => {
-        try { await api('PATCH', `/api/customers/${id}`, { name: name.value, notes: notes.value }); msg.textContent = 'Salvo.'; } catch (e) { msg.textContent = e.message; }
+        msg.className = 'muted'; msg.textContent = 'Salvando…';
+        try { await api('PATCH', `/api/customers/${id}`, { name: name.value, notes: notes.value }); msg.className = 'ok-msg'; msg.textContent = 'Salvo.'; }
+        catch (e) { msg.className = 'err'; msg.textContent = e.message; }
       } }, 'Salvar'), msg)),
     h('h3', {}, 'Histórico de conversas'),
-    h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Início'), h('th', {}, 'Status'), h('th', {}, 'Responsável'), h('th', {}, 'Última mensagem'))),
+    conversations.length ? h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Início'), h('th', {}, 'Status'), h('th', {}, 'Responsável'), h('th', {}, 'Última mensagem'))),
       h('tbody', {}, conversations.map((c) => h('tr', {}, h('td', {}, h('a', { href: `#/inbox/${c.id}` }, fmtTime(c.created_at))),
-        h('td', {}, STATUS[c.status]), h('td', {}, c.assignee_name ?? '—'), h('td', {}, c.last_preview)))))));
+        h('td', {}, h('span', { class: `badge ${c.status}` }, STATUS[c.status])), h('td', {}, c.assignee_name ?? '—'), h('td', {}, c.last_preview)))))) : empty('Sem conversas visíveis para você'));
 }
 
 // ---------- indicadores ----------
 async function metricsView(main) {
   const f = { from: '', to: '', weekend: '' };
-  const out = h('div');
+  const out = h('div', {}, loading());
   const load = async () => {
-    const m = await api('GET', `/api/metrics?${new URLSearchParams(Object.entries(f).filter(([, v]) => v))}`);
+    let m;
+    try { m = await api('GET', `/api/metrics?${new URLSearchParams(Object.entries(f).filter(([, v]) => v))}`); }
+    catch (e) { out.replaceChildren(h('div', { class: 'err', role: 'alert' }, e.message)); return; }
     const card = (label, v) => h('div', { class: 'card' }, h('div', { class: 'muted' }, label), h('div', { class: 'v' }, String(v)));
-    const bars = (rows, k, v, max = Math.max(1, ...rows.map((r) => r[v]))) => h('div', { class: 'bars' }, rows.map((r) => h('div', { class: 'bar' },
-      h('span', {}, r[k]), (() => { const i = h('i'); i.style.width = `${(r[v] / max) * 100}%`; return h('div', {}, i); })(), h('span', {}, String(r[v])))));
+    const bars = (rows, k, v) => { const max = Math.max(1, ...rows.map((r) => r[v])); return h('div', { class: 'bars' }, rows.map((r) => h('div', { class: 'bar' },
+      h('span', {}, r[k]), (() => { const i = h('i'); i.style.width = `${(r[v] / max) * 100}%`; return h('div', {}, i); })(), h('span', {}, String(r[v]))))); };
     out.replaceChildren(
       h('div', { class: 'cards' }, card('Conversas', m.total), card('Abertas', m.byStatus.open), card('Em andamento', m.byStatus.in_progress), card('Resolvidas', m.byStatus.resolved),
         card('1ª resposta (média)', fmtDur(m.firstResponse.avgSeconds)), card('1ª resposta (mediana)', fmtDur(m.firstResponse.medianSeconds)),
         card('Resolução (média)', fmtDur(m.resolution.avgSeconds))),
-      h('div', { class: 'section' }, h('h3', {}, 'Conversas por dia'), m.perDay.length ? bars(m.perDay, 'day', 'count') : h('p', { class: 'muted' }, 'Sem dados no período.')),
-      h('div', { class: 'section' }, h('h3', {}, 'Por responsável'), m.perAgent.length ? bars(m.perAgent, 'agent', 'count') : null));
+      h('div', { class: 'section' }, h('h3', {}, 'Conversas por dia'), m.perDay.length ? bars(m.perDay, 'day', 'count') : empty('Sem dados no período')),
+      h('div', { class: 'section' }, h('h3', {}, 'Por responsável'), m.perAgent.length ? bars(m.perAgent, 'agent', 'count') : empty('Sem dados no período')));
   };
   const on = (k, el) => { el.addEventListener('change', () => { f[k] = el.value; load(); }); return el; };
   main.append(h('div', { class: 'page' }, h('h2', {}, 'Indicadores'),
     h('div', { class: 'form-row' },
-      h('label', {}, 'De ', on('from', h('input', { type: 'date' }))), h('label', {}, 'Até ', on('to', h('input', { type: 'date' }))),
-      h('label', {}, 'Plantão ', on('weekend', h('select', {}, opt('', 'Qualquer dia'), opt('both', 'Sáb + Dom'), opt('sat', 'Sábado'), opt('sun', 'Domingo'))))),
+      h('label', { class: 'field' }, 'De', on('from', h('input', { type: 'date' }))), h('label', { class: 'field' }, 'Até', on('to', h('input', { type: 'date' }))),
+      h('label', { class: 'field' }, 'Plantão', on('weekend', h('select', {}, opt('', 'Qualquer dia'), opt('both', 'Sáb + Dom'), opt('sat', 'Sábado'), opt('sun', 'Domingo'))))),
     out));
   load();
 }
 
 // ---------- administração ----------
 async function adminView(main) {
-  if (state.me.role !== 'admin') return main.append(h('div', { class: 'page' }, 'Acesso restrito.'));
-  const page = h('div', { class: 'page' }, h('h2', {}, 'Administração'));
+  if (state.me.role !== 'admin') return main.append(h('div', { class: 'page' }, empty('Acesso restrito', 'Apenas administradores veem esta área.')));
+  const page = h('div', { class: 'page' }, h('h2', {}, 'Administração'), loading());
   main.append(page);
-  const reload = async () => { await loadRefs(); page.replaceChildren(h('h2', {}, 'Administração'), ...(await sections())); };
-  const wrap = (fn) => async (...a) => { try { await fn(...a); await reload(); } catch (e) { alert(e.message); } };
+  const reload = async () => {
+    try { await loadRefs(); page.replaceChildren(h('h2', {}, 'Administração'), ...(await sections())); }
+    catch (e) { page.replaceChildren(h('h2', {}, 'Administração'), h('div', { class: 'err', role: 'alert' }, e.message)); }
+  };
+  const after = (fn) => async (...a) => { await fn(...a); await reload(); };
+  const tableWrap = (...kids) => h('div', { class: 'table-wrap' }, h('table', {}, ...kids));
 
   async function sections() {
     const audit = await api('GET', '/api/audit');
-    const input = (ph, type = 'text') => h('input', { placeholder: ph, type, 'aria-label': ph });
+    const teamName = (id) => state.teams.find((t) => t.id === id)?.name;
+    const teamOptions = state.teams.map((t) => [t.id, t.name]);
+    const pending = state.users.filter((u) => u.status === 'pending');
+
+    // cadastros pendentes (alternativa ao link do e-mail)
+    const pend = pending.length ? h('div', { class: 'section' }, h('h3', {}, `Cadastros aguardando aprovação (${pending.length})`),
+      h('p', { class: 'muted' }, 'Você também pode decidir pelo link enviado ao e-mail do administrador.'),
+      tableWrap(h('tbody', {}, pending.map((u) => h('tr', {}, h('td', {}, u.name), h('td', {}, u.email),
+        h('td', {}, u.email_verified ? h('span', { class: 'badge approved' }, 'E-mail confirmado') : h('span', { class: 'badge pending' }, 'E-mail não confirmado')),
+        h('td', { class: 'actions' },
+          h('button', { class: 'btn small', disabled: !u.email_verified, title: u.email_verified ? null : 'O solicitante precisa confirmar o e-mail primeiro', onclick: after(() => api('POST', `/api/users/${u.id}/approval`, { decision: 'approve' })) }, 'Aprovar'), ' ',
+          h('button', { class: 'btn ghost small', onclick: () => confirmAction('Recusar cadastro', `${u.name} (${u.email}) não terá acesso.`, 'Recusar', after(() => api('POST', `/api/users/${u.id}/approval`, { decision: 'reject' }))) }, 'Recusar'))))))) : null;
 
     // usuários
-    const un = input('Nome'), ue = input('E-mail', 'email'), up = input('Senha (mín. 8)', 'password');
-    const ur = h('select', {}, opt('agent', 'Atendente'), opt('admin', 'Administrador'));
-    const ut = h('select', { multiple: true, 'aria-label': 'Equipes', size: Math.max(2, state.teams.length) }, state.teams.map((t) => opt(t.id, t.name)));
+    const newUser = () => askForm({
+      title: 'Novo usuário', submit: 'Criar',
+      fields: [{ name: 'name', label: 'Nome', required: true }, { name: 'email', label: 'E-mail', type: 'email', required: true },
+        { name: 'password', label: 'Senha inicial', type: 'password', required: true },
+        { name: 'role', label: 'Perfil', type: 'select', value: 'agent', options: [['agent', 'Atendente'], ['admin', 'Administrador']] },
+        { name: 'teamIds', label: 'Equipes', type: 'checkboxes', options: teamOptions }],
+      onSubmit: after((v) => api('POST', '/api/users', v)),
+    });
+    const resetPass = (u) => askForm({
+      title: `Nova senha para ${u.name}`, intro: 'As sessões abertas dele serão encerradas.', submit: 'Trocar senha',
+      fields: [{ name: 'password', label: 'Nova senha', type: 'password', required: true }],
+      onSubmit: after((v) => api('PATCH', `/api/users/${u.id}`, { password: v.password })),
+    });
+    const editTeams = (u) => askForm({
+      title: `Equipes de ${u.name}`, submit: 'Salvar',
+      fields: [{ name: 'teamIds', label: 'Equipes', type: 'checkboxes', options: teamOptions, value: u.teamIds }],
+      onSubmit: after((v) => api('PATCH', `/api/users/${u.id}`, { teamIds: v.teamIds })),
+    });
+    const approved = state.users.filter((u) => u.status !== 'pending');
     const users = h('div', { class: 'section' }, h('h3', {}, 'Usuários'),
-      h('div', { class: 'form-row' }, un, ue, up, ur, ut, h('button', { class: 'btn', onclick: wrap(() => api('POST', '/api/users', {
-        name: un.value, email: ue.value, password: up.value, role: ur.value, teamIds: [...ut.selectedOptions].map((o) => Number(o.value)) })) }, 'Adicionar')),
-      h('table', {}, h('thead', {}, h('tr', {}, ['Nome', 'E-mail', 'Perfil', 'Equipes', ''].map((x) => h('th', {}, x)))),
-        h('tbody', {}, state.users.map((u) => h('tr', {}, h('td', {}, u.name), h('td', {}, u.email), h('td', {}, u.role === 'admin' ? 'Admin' : 'Atendente'),
-          h('td', {}, u.teamIds.map((id) => state.teams.find((t) => t.id === id)?.name).filter(Boolean).join(', ') || '—'),
-          h('td', {}, h('button', { class: 'btn ghost small', onclick: wrap(() => api('PATCH', `/api/users/${u.id}`, { active: !u.active })) }, u.active ? 'Desativar' : 'Reativar'), ' ',
-            h('button', { class: 'btn ghost small', onclick: wrap(async () => { const p = prompt('Nova senha (mín. 8)'); if (p) await api('PATCH', `/api/users/${u.id}`, { password: p }); }) }, 'Trocar senha'), ' ',
-            h('button', { class: 'btn ghost small', onclick: wrap(async () => {
-              const names = prompt(`Equipes de ${u.name} (ids separados por vírgula):\n${state.teams.map((t) => `${t.id} = ${t.name}`).join('\n')}`, u.teamIds.join(','));
-              if (names !== null) await api('PATCH', `/api/users/${u.id}`, { teamIds: names.split(',').map((s) => Number(s.trim())).filter(Boolean) });
-            }) }, 'Equipes')))))));
+      h('div', { class: 'form-row' }, h('button', { class: 'btn', onclick: newUser }, 'Novo usuário')),
+      tableWrap(h('thead', {}, h('tr', {}, ['Nome', 'E-mail', 'Perfil', 'Situação', 'Equipes', ''].map((x) => h('th', {}, x)))),
+        h('tbody', {}, approved.map((u) => h('tr', {}, h('td', {}, u.name), h('td', {}, u.email), h('td', {}, u.role === 'admin' ? 'Admin' : 'Atendente'),
+          h('td', {}, u.status === 'rejected' ? h('span', { class: 'badge rejected' }, USER_STATUS.rejected) : h('span', { class: `badge ${u.active ? 'approved' : 'off'}` }, u.active ? 'Ativo' : 'Inativo')),
+          h('td', {}, u.teamIds.map(teamName).filter(Boolean).join(', ') || '—'),
+          h('td', { class: 'actions' }, u.status === 'rejected' ? h('button', { class: 'btn ghost small', onclick: () => confirmAction('Reabrir cadastro',
+            `${u.name} (${u.email}) volta para "aguardando aprovação"${u.email_verified ? ' e você poderá aprovar pelo painel' : ', mas precisará refazer o pedido para confirmar o e-mail'}.`,
+            'Reabrir', after(() => api('POST', `/api/users/${u.id}/reopen`))) }, 'Reabrir') : [
+            h('button', { class: 'btn ghost small', onclick: after(() => api('PATCH', `/api/users/${u.id}`, { active: !u.active })) }, u.active ? 'Desativar' : 'Reativar'), ' ',
+            h('button', { class: 'btn ghost small', onclick: () => resetPass(u) }, 'Senha'), ' ',
+            h('button', { class: 'btn ghost small', onclick: () => editTeams(u) }, 'Equipes')]))))));
 
     // equipes
-    const tn = input('Nome da equipe');
+    const newTeam = () => askForm({
+      title: 'Nova equipe', submit: 'Criar', fields: [{ name: 'name', label: 'Nome da equipe', required: true }],
+      onSubmit: after((v) => api('POST', '/api/teams', { name: v.name })),
+    });
     const teams = h('div', { class: 'section' }, h('h3', {}, 'Equipes'),
-      h('div', { class: 'form-row' }, tn, h('button', { class: 'btn', onclick: wrap(() => api('POST', '/api/teams', { name: tn.value })) }, 'Criar')),
-      h('table', {}, h('tbody', {}, state.teams.map((t) => h('tr', {}, h('td', {}, t.name), h('td', { class: 'muted' }, `${t.memberIds.length} membro(s)`),
-        h('td', {}, h('button', { class: 'btn ghost small', onclick: wrap(async () => { if (confirm(`Excluir a equipe ${t.name}?`)) await api('DELETE', `/api/teams/${t.id}`); }) }, 'Excluir')))))));
+      h('div', { class: 'form-row' }, h('button', { class: 'btn', onclick: newTeam }, 'Nova equipe')),
+      state.teams.length ? tableWrap(h('tbody', {}, state.teams.map((t) => h('tr', {}, h('td', {}, t.name), h('td', { class: 'muted' }, `${t.memberIds.length} membro(s)`),
+        h('td', { class: 'actions' }, h('button', { class: 'btn ghost small', onclick: () => confirmAction('Excluir equipe', `A equipe ${t.name} será removida e suas conversas ficarão sem equipe.`, 'Excluir', after(() => api('DELETE', `/api/teams/${t.id}`))) }, 'Excluir'))))))
+        : empty('Nenhuma equipe', 'Crie equipes para organizar quem atende o quê.'));
 
     // templates
-    const pn = input('nome_do_template'), pl = input('Idioma'); pl.value = 'pt_BR';
-    const pc = h('select', {}, opt('UTILITY', 'Utilidade'), opt('MARKETING', 'Marketing'), opt('AUTHENTICATION', 'Autenticação'));
-    const pb = h('textarea', { rows: 2, placeholder: 'Texto com {{1}}, {{2}}... igual ao aprovado na Meta', 'aria-label': 'Texto' });
+    const newTemplate = () => askForm({
+      title: 'Novo template', intro: 'Nome e idioma precisam ser idênticos aos do template aprovado na Meta.', submit: 'Adicionar',
+      fields: [{ name: 'name', label: 'Nome', required: true, help: 'minúsculas, números e _ (ex.: retorno_atendimento)' },
+        { name: 'language', label: 'Idioma', value: 'pt_BR', required: true },
+        { name: 'category', label: 'Categoria', type: 'select', value: 'UTILITY', options: [['UTILITY', 'Utilidade'], ['MARKETING', 'Marketing'], ['AUTHENTICATION', 'Autenticação']] },
+        { name: 'body', label: 'Texto', type: 'textarea', required: true, help: 'Use {{1}}, {{2}}… como no template aprovado.' }],
+      onSubmit: after((v) => api('POST', '/api/templates', v)),
+    });
     const templates = h('div', { class: 'section' }, h('h3', {}, 'Templates do WhatsApp'),
-      h('p', { class: 'muted' }, 'Cadastre aqui os templates já aprovados na Meta (nome e idioma idênticos). O envio fora da janela de 24 h só aceita estes.'),
-      h('div', { class: 'form-row' }, pn, pl, pc, pb, h('button', { class: 'btn', onclick: wrap(() => api('POST', '/api/templates', { name: pn.value, language: pl.value, category: pc.value, body: pb.value })) }, 'Adicionar')),
-      h('table', {}, h('tbody', {}, state.templates.map((t) => h('tr', {}, h('td', {}, `${t.name} (${t.language})`), h('td', {}, t.body),
-        h('td', {}, h('button', { class: 'btn ghost small', onclick: wrap(() => api('PATCH', `/api/templates/${t.id}`, { active: !t.active })) }, t.active ? 'Desativar' : 'Ativar')))))));
+      h('p', { class: 'muted' }, 'Fora da janela de 24 h só é possível enviar templates aprovados pela Meta.'),
+      h('div', { class: 'form-row' }, h('button', { class: 'btn', onclick: newTemplate }, 'Novo template')),
+      state.templates.length ? tableWrap(h('tbody', {}, state.templates.map((t) => h('tr', {}, h('td', {}, `${t.name} (${t.language})`), h('td', {}, t.body),
+        h('td', { class: 'actions' }, h('button', { class: 'btn ghost small', onclick: after(() => api('PATCH', `/api/templates/${t.id}`, { active: !t.active })) }, t.active ? 'Desativar' : 'Ativar'))))))
+        : empty('Nenhum template', 'Cadastre os templates aprovados na Meta.'));
 
     // auditoria
     const log = h('div', { class: 'section' }, h('h3', {}, 'Auditoria (últimos 200 eventos)'),
-      h('table', {}, h('tbody', {}, audit.map((a) => h('tr', {}, h('td', {}, fmtTime(a.created_at)), h('td', {}, a.user_name ?? 'sistema'), h('td', {}, a.action), h('td', { class: 'muted' }, `${a.entity} #${a.entity_id ?? ''}`))))));
-    return [users, teams, templates, log];
+      audit.length ? tableWrap(h('tbody', {}, audit.map((a) => h('tr', {}, h('td', {}, fmtTime(a.created_at)), h('td', {}, a.user_name ?? 'sistema / e-mail'), h('td', {}, a.action), h('td', { class: 'muted' }, `${a.entity} #${a.entity_id ?? ''}`)))))
+        : empty('Nada registrado ainda'));
+    return [pend, users, teams, templates, log].filter(Boolean);
   }
   reload();
 }

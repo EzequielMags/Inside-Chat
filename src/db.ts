@@ -90,6 +90,24 @@ const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   );
   `,
+  `
+  -- v2: cadastro com aprovação do administrador (e-mail com link de uso único)
+  ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'approved' CHECK (status IN ('pending','approved','rejected'));
+  CREATE TABLE signup_approvals (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,   -- sha256 do token enviado por e-mail
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX idx_signup_user ON signup_approvals(user_id);
+  `,
+  `
+  -- v3: o solicitante confirma a posse do e-mail antes de o pedido chegar ao aprovador
+  ALTER TABLE users ADD COLUMN email_verified_at TEXT;
+  ALTER TABLE signup_approvals ADD COLUMN kind TEXT NOT NULL DEFAULT 'approval' CHECK (kind IN ('verify','approval'));
+  `,
 ];
 
 export function openDb(path: string): Db {
