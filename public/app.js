@@ -269,11 +269,11 @@ async function renderVerify() {
       e.status === 410 ? 'Este link é inválido, expirou ou já foi usado. Se ainda não confirmou, refaça o cadastro para receber outro.' : e.message), home);
   }
   const err = h('div', { class: 'err', role: 'alert' });
-  const pass = h('input', { type: 'password', autocomplete: 'new-password', minlength: 8 });
-  const pass2 = h('input', { type: 'password', autocomplete: 'new-password', minlength: 8 });
+  const pass = h('input', { type: 'password', autocomplete: 'new-password' });
+  const pass2 = h('input', { type: 'password', autocomplete: 'new-password' });
   const btn = h('button', { class: 'btn', onclick: async () => {
     err.textContent = '';
-    if (pass.value.length < 8) { err.textContent = 'A senha precisa ter no mínimo 8 caracteres.'; return; }
+    if (!pass.value) { err.textContent = 'Informe a senha.'; return; }
     if (pass.value !== pass2.value) { err.textContent = 'As senhas não conferem.'; return; }
     btn.disabled = true;
     try {
@@ -285,7 +285,7 @@ async function renderVerify() {
   const field = (label, input, help) => h('label', { class: 'field' }, label, input, help ? h('span', { class: 'help' }, help) : null);
   body.replaceChildren(h('div', { class: 'approve-card' }, h('p', {}, 'Confirme que o pedido de acesso ao Cordial foi feito por você e escolha sua senha.'),
     h('dl', {}, h('dt', {}, 'Nome'), h('dd', {}, info.name), h('dt', {}, 'E-mail'), h('dd', {}, info.email)),
-    field('Senha', pass, 'Mínimo de 8 caracteres.'), field('Repita a senha', pass2), err, btn,
+    field('Senha', pass), field('Repita a senha', pass2), err, btn,
     h('p', { class: 'help' }, 'Se não foi você, feche esta página.')));
 }
 
@@ -578,14 +578,14 @@ async function adminView(main) {
     const newUser = () => askForm({
       title: 'Novo usuário', submit: 'Criar',
       fields: [{ name: 'name', label: 'Nome', required: true }, { name: 'email', label: 'E-mail', type: 'email', required: true },
-        { name: 'password', label: 'Senha inicial', type: 'password', required: true, minlength: 8, help: 'Mínimo de 8 caracteres.' },
+        { name: 'password', label: 'Senha inicial', type: 'password', required: true },
         { name: 'role', label: 'Perfil', type: 'select', value: 'agent', options: [['agent', 'Atendente'], ['admin', 'Administrador']] },
         { name: 'teamIds', label: 'Equipes', type: 'checkboxes', options: teamOptions }],
       onSubmit: after((v) => api('POST', '/api/users', v)),
     });
     const resetPass = (u) => askForm({
       title: `Nova senha para ${u.name}`, intro: 'As sessões abertas dele serão encerradas.', submit: 'Trocar senha',
-      fields: [{ name: 'password', label: 'Nova senha', type: 'password', required: true, minlength: 8 }],
+      fields: [{ name: 'password', label: 'Nova senha', type: 'password', required: true }],
       onSubmit: after((v) => api('PATCH', `/api/users/${u.id}`, { password: v.password })),
     });
     const editTeams = (u) => askForm({

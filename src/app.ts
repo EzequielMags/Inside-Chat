@@ -30,7 +30,7 @@ const publicDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
 const id = z.coerce.number().int().positive();
 const email = z.string().trim().toLowerCase().email().max(200);
-const password = z.string().min(8, 'Senha com no mínimo 8 caracteres').max(200);
+const password = z.string().min(1, 'Informe a senha').max(200); // sem regras de complexidade ou tamanho mínimo (decisão do produto)
 
 export interface AppDeps { db: Db; channel: Channel; mailer?: Mailer; logger?: boolean }
 

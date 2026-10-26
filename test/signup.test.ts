@@ -56,7 +56,7 @@ test('cadastro: pendente, confirma e-mail e define a senha com o solicitante, s�
   assert.equal((await post('/api/auth/approval', { token: vt, decision: 'approve' })).statusCode, 410);
 
   assert.equal((await post('/api/auth/verify', { token: vt, password: PW }, {})).statusCode, 403); // exige CSRF
-  assert.equal((await post('/api/auth/verify', { token: vt, password: 'curta' })).statusCode, 400);
+  assert.equal((await post('/api/auth/verify', { token: vt, password: '' })).statusCode, 400); // vazia continua inválida
   assert.equal((await post('/api/auth/verify', { token: vt })).statusCode, 400); // senha obrigatória
   assert.equal((await verify(vt)).statusCode, 200);
   assert.equal((await verify(vt)).statusCode, 410); // uso único
