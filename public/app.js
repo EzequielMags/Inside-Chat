@@ -44,6 +44,17 @@ const opt = (value, label, sel) => h('option', { value, selected: sel }, label);
 const empty = (title, hint) => h('div', { class: 'empty' }, h('strong', {}, title), hint ? h('span', {}, hint) : null);
 const loading = (msg = 'Carregando…') => h('div', { class: 'loading', role: 'status' }, msg);
 
+// Cor de destaque: o laranja é o padrão; as outras trocam os tokens --brand* via [data-accent] (styles.css).
+const ACCENTS = [['orange', 'Laranja'], ['blue', 'Azul'], ['green', 'Verde'], ['purple', 'Roxo'], ['pink', 'Rosa']];
+function applyAccent(name, save = false) {
+  const valid = ACCENTS.some(([k]) => k === name) ? name : 'orange';
+  if (valid === 'orange') delete document.documentElement.dataset.accent; else document.documentElement.dataset.accent = valid;
+  if (save) { try { localStorage.setItem('insidechat.accent', valid); } catch { /* sem armazenamento: vale só nesta sessão */ } }
+  return valid;
+}
+const currentAccent = () => document.documentElement.dataset.accent ?? 'orange';
+try { applyAccent(localStorage.getItem('insidechat.accent')); } catch { /* ignora */ }
+
 // Ícones e ilustração próprios, montados por DOM (sem innerHTML e sem dependência de UI).
 const SVG_NS = 'http://www.w3.org/2000/svg';
 function svg(tag, attrs = {}, ...kids) {
@@ -61,6 +72,7 @@ const ICONS = {
   users: [['circle', { cx: 9, cy: 8, r: 3.2 }], ['path', { d: 'M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6' }], ['circle', { cx: 17, cy: 9, r: 2.4 }], ['path', { d: 'M17 14.2c2.4 0 4 1.8 4 4.3' }]],
   chart: [['path', { d: 'M5 20V10M12 20V4M19 20v-7' }]],
   shield: [['path', { d: 'M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z' }]],
+  palette: [['path', { d: 'M12 3a9 9 0 1 0 0 18c1.2 0 2-.8 2-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z' }], ['path', { d: 'M7.5 11h.01M10 7h.01M15 7h.01', 'stroke-width': 3 }]],
   logout: [['path', { d: 'M9 4H5v16h4M16 8l4 4-4 4M20 12H9' }]],
 };
 const icon = (name) => svg('svg', { viewBox: '0 0 24 24', class: 'ico', 'aria-hidden': 'true', focusable: 'false' }, ICONS[name].map(([tag, a]) => svg(tag, a)));
@@ -332,13 +344,27 @@ async function renderVerify() {
     h('p', { class: 'help' }, 'Se não foi você, feche esta página.')));
 }
 
+function accentMenu() {
+  const swatches = ACCENTS.map(([k, label]) => h('button', { class: 'swatch', role: 'menuitemradio', 'aria-pressed': String(currentAccent() === k), onclick: () => {
+    applyAccent(k, true);
+    swatches.forEach((b, i) => b.setAttribute('aria-pressed', String(ACCENTS[i][0] === k)));
+    menu.classList.add('hidden');
+  } }, h('i', { class: `sw sw-${k}` }), label));
+  const menu = h('div', { class: 'menu hidden', role: 'menu', 'aria-label': 'Cor do sistema' }, swatches);
+  const btn = h('button', { class: 'icon-btn', 'aria-label': 'Cor do sistema', 'aria-haspopup': 'menu', title: 'Cor do sistema', onclick: (ev) => { ev.stopPropagation(); menu.classList.toggle('hidden'); } }, icon('palette'));
+  const close = (ev) => { if (!menu.isConnected) return document.removeEventListener('click', close); if (!menu.contains(ev.target)) menu.classList.add('hidden'); };
+  document.addEventListener('click', close);
+  menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { menu.classList.add('hidden'); btn.focus(); } });
+  return h('div', { class: 'menu-wrap accent-wrap' }, btn, menu);
+}
+
 function topbar(page) {
   const link = (p, label, ico) => h('a', { href: `#/${p}`, class: page === p ? 'active' : '', 'aria-current': page === p ? 'page' : null }, icon(ico), h('span', {}, label));
   return h('header', { class: 'top' },
     h('div', { class: 'brand' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Inside ', h('b', {}, 'Chat'))),
     h('nav', { class: 'nav', 'aria-label': 'Principal' }, link('inbox', 'Conversas', 'chat'), link('customers', 'Clientes', 'users'), link('metrics', 'Indicadores', 'chart'),
       state.me.role === 'admin' ? link('admin', 'Administração', 'shield') : null),
-    h('div', { class: 'who' },
+    h('div', { class: 'who' }, accentMenu(),
       h('div', { class: 'who-text' }, h('div', { class: 'name' }, state.me.name), h('div', { class: 'muted' }, state.me.role === 'admin' ? 'Administrador' : 'Atendente')),
       h('div', { class: 'avatar small', 'aria-hidden': 'true' }, initials(state.me.name)),
       h('button', { class: 'icon-btn', 'aria-label': 'Sair', title: 'Sair', onclick: async () => { await api('POST', '/api/auth/logout'); state.me = null; state.authMode = 'login'; render(); } }, icon('logout'))),

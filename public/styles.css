@@ -11,8 +11,15 @@
   --glow-1: #5a2606; --glow-2: #3b1a08; --panel-bg: #120d09;
   --panel-ink: #f4efe8; --panel-muted: #b9ae9f;
   --radius: 10px;
+  --sw-orange: #ff7a1a; --sw-blue: #3b8cff; --sw-green: #22b573; --sw-purple: #9b7bff; --sw-pink: #ff5c9d;
   color-scheme: dark;
 }
+
+/* Cores de destaque alternativas (seletor no topo). O laranja é o padrão, definido em :root. */
+[data-accent="blue"] { --brand: #3b8cff; --brand-hover: #5aa0ff; --brand-text: #7db4ff; --brand-soft: #0f2038; --brand-line: #1f4a85; --brand-ink: #06101f; --out: #14263d; --glow-1: #0e2f63; --glow-2: #0b1d3a; --panel-bg: #090d14; }
+[data-accent="green"] { --brand: #22b573; --brand-hover: #3cc487; --brand-text: #5fd9a0; --brand-soft: #0e2a1e; --brand-line: #1c6a47; --brand-ink: #03140c; --out: #11301f; --glow-1: #0b4a2d; --glow-2: #0a2e1d; --panel-bg: #09110d; }
+[data-accent="purple"] { --brand: #9b7bff; --brand-hover: #ad92ff; --brand-text: #b9a2ff; --brand-soft: #1f1838; --brand-line: #4a3a8f; --brand-ink: #0e0820; --out: #261c45; --glow-1: #3a2380; --glow-2: #231552; --panel-bg: #0e0a17; --note: #12302f; --note-line: #4fb8ab; }
+[data-accent="pink"] { --brand: #ff5c9d; --brand-hover: #ff77ae; --brand-text: #ff8dbb; --brand-soft: #3a1224; --brand-line: #8a2f57; --brand-ink: #1f0510; --out: #40182b; --glow-1: #7a1d4a; --glow-2: #4a1230; --panel-bg: #150a10; }
 
 /* ===== base ===== */
 * { box-sizing: border-box; }
@@ -195,6 +202,15 @@ td.actions { white-space: nowrap; }
 .bar i { display: block; height: 10px; background: var(--brand); border-radius: 5px; min-width: 2px; }
 .form-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 16px; align-items: end; }
 .section { margin-bottom: 28px; }
+
+/* ===== seletor de cor ===== */
+.accent-wrap .menu { min-width: 190px; }
+.menu button.swatch { display: flex; align-items: center; gap: 10px; }
+.sw { width: 16px; height: 16px; flex: none; border-radius: 50%; border: 2px solid var(--surface-2); box-shadow: 0 0 0 1px var(--control-line); }
+.sw-orange { background: var(--sw-orange); } .sw-blue { background: var(--sw-blue); } .sw-green { background: var(--sw-green); }
+.sw-purple { background: var(--sw-purple); } .sw-pink { background: var(--sw-pink); }
+.menu button.swatch[aria-pressed="true"] { color: var(--brand-text); font-weight: 600; }
+.menu button.swatch[aria-pressed="true"]::after { content: "✓"; margin-left: auto; }
 
 /* ===== diálogo ===== */
 dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); padding: 0; width: min(440px, calc(100% - 32px)); box-shadow: 0 24px 60px rgb(0 0 0 / .6); }
