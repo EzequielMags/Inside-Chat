@@ -1,4 +1,4 @@
-# Cordial
+# Inside Chat
 
 Caixa de entrada compartilhada para atendimento via WhatsApp Business Platform (Cloud API oficial).
 Planejamento, decisões e riscos: [`docs/PLANO.md`](docs/PLANO.md).

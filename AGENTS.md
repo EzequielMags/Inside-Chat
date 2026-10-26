@@ -1,8 +1,8 @@
-# AGENTS.md — Cordial
+# AGENTS.md — Inside Chat
 
 Regras para todo agente de código neste repositório (Claude Code, Codex ou outro, inclusive rodando pelo Orca). Leia antes de qualquer tarefa.
 
-O Cordial é uma caixa de entrada compartilhada para atendimento via **WhatsApp Business Platform (Cloud API oficial)**. Plano, suposições e riscos: `docs/PLANO.md`. Como rodar: `README.md`. O Integgri é só referência conceitual: não copie nome, textos nem interface dele.
+O Inside Chat é uma caixa de entrada compartilhada para atendimento via **WhatsApp Business Platform (Cloud API oficial)**. Plano, suposições e riscos: `docs/PLANO.md`. Como rodar: `README.md`. O Integgri é só referência conceitual: não copie nome, textos nem interface dele.
 
 ## Stack e estrutura
 

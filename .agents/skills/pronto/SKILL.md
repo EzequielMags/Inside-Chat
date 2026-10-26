@@ -1,6 +1,6 @@
 ---
 name: pronto
-description: Confere a Definition of Done do Cordial antes de dar uma tarefa como concluída ou abrir PR (testes, typecheck, segurança, LGPD, docs) e monta o resumo da entrega. Use quando o usuário disser "pronto", "terminei", "abre o PR" ou ao fim de uma etapa.
+description: Confere a Definition of Done do Inside Chat antes de dar uma tarefa como concluída ou abrir PR (testes, typecheck, segurança, LGPD, docs) e monta o resumo da entrega. Use quando o usuário disser "pronto", "terminei", "abre o PR" ou ao fim de uma etapa.
 ---
 
 # Pronto?

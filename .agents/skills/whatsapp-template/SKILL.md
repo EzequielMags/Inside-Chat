@@ -1,6 +1,6 @@
 ---
 name: whatsapp-template
-description: Regras de envio do WhatsApp no Cordial - janela de 24 h, templates aprovados pela Meta, parâmetros, categorias e falhas de envio. Use ao mexer em sendMessage, windowInfo, renderTemplate, na tela de templates ou em qualquer envio iniciado pela empresa.
+description: Regras de envio do WhatsApp no Inside Chat - janela de 24 h, templates aprovados pela Meta, parâmetros, categorias e falhas de envio. Use ao mexer em sendMessage, windowInfo, renderTemplate, na tela de templates ou em qualquer envio iniciado pela empresa.
 ---
 
 # Envio: janela de 24 h e templates
@@ -10,7 +10,7 @@ Arquivos: `src/domain.ts` (`windowInfo`, `renderTemplate`, `sendMessage`), `src/
 ## Regras da Meta (o app deve garantir)
 
 - **Texto livre só dentro da janela de 24 h** contada da última mensagem **do cliente** (`conversations.last_inbound_at`). Fora dela: `409 window_closed` e o front oferece template.
-- **Fora da janela, só template aprovado** na Meta. O Cordial não aprova nada: o admin cadastra em *Administração → Templates* com `name` e `language` **idênticos** aos da Meta (`UNIQUE(name, language)`).
+- **Fora da janela, só template aprovado** na Meta. O Inside Chat não aprova nada: o admin cadastra em *Administração → Templates* com `name` e `language` **idênticos** aos da Meta (`UNIQUE(name, language)`).
 - Variáveis `{{1}}`, `{{2}}`... na ordem; todas obrigatórias e não vazias. O corpo salvo em `messages.body` é o texto renderizado (para o histórico), mas para a API vai só `name` + `language` + `parameters`.
 - Categorias: `UTILITY`, `MARKETING`, `AUTHENTICATION`. Marketing exige **opt-in** do cliente (responsabilidade do negócio; não crie disparo em massa sem um cartão que trate opt-in e opt-out).
 - Limite de 4096 caracteres por texto.

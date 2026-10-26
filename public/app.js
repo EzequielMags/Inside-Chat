@@ -1,4 +1,4 @@
-// Cordial — SPA sem build. Todo conteúdo dinâmico entra via textContent (sem innerHTML) para evitar XSS.
+// Inside Chat — SPA sem build. Todo conteúdo dinâmico entra via textContent (sem innerHTML) para evitar XSS.
 
 // ---------- utilidades ----------
 function h(tag, props = {}, ...kids) {
@@ -156,11 +156,11 @@ function render() {
 function authShell(content) {
   return h('div', { class: 'auth' },
     h('section', { class: 'auth-panel', 'aria-hidden': 'true' },
-      h('div', { class: 'brand' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Cordial')),
-      h('h2', {}, 'Atendimento organizado, equipe alinhada.'),
+      h('div', { class: 'brand' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Inside ', h('b', {}, 'Chat'))),
+      h('h2', {}, 'Atendimento organizado, ', h('em', {}, 'equipe alinhada.')),
       h('ul', {}, h('li', {}, 'Uma caixa de entrada para todo o time'), h('li', {}, 'Histórico do cliente sempre à mão'), h('li', {}, 'Notas internas que o cliente nunca vê'))),
     h('main', { class: 'auth-main' }, h('div', { class: 'auth-card' },
-      h('div', { class: 'brand brand-mobile' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Cordial')), content)));
+      h('div', { class: 'brand brand-mobile' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Inside ', h('b', {}, 'Chat'))), content)));
 }
 
 function authView() {
@@ -206,7 +206,7 @@ function authView() {
   field('E-mail', email), mode === 'login' ? field('Senha', pass) : null, notice, err, submit);
 
   return authShell([
-    h('div', {}, h('h1', {}, mode === 'login' ? 'Entrar no Cordial' : 'Criar acesso'),
+    h('div', {}, h('h1', {}, mode === 'login' ? 'Entrar no Inside Chat' : 'Criar acesso'),
       h('p', { class: 'muted' }, mode === 'login' ? 'Use o e-mail e a senha da sua conta.' : 'Você confirma seu e-mail e escolhe a senha pelo link que enviaremos. O acesso só é liberado depois que o administrador aprovar.')),
     form,
     h('p', { class: 'auth-switch' }, mode === 'login' ? 'Ainda não tem acesso? ' : 'Já tem conta? ',
@@ -222,7 +222,7 @@ async function renderApproval() {
   root.append(authShell([h('h1', {}, 'Aprovar cadastro'), body]));
   const done = (cls, title, msg) => body.replaceChildren(
     h('div', { class: `notice ${cls}`, role: 'status' }, h('strong', {}, title), msg),
-    h('p', { class: 'auth-switch' }, h('a', { href: '/' }, 'Ir para o Cordial')));
+    h('p', { class: 'auth-switch' }, h('a', { href: '/' }, 'Ir para o Inside Chat')));
   let info;
   try { info = await api('GET', `/api/auth/approval?t=${encodeURIComponent(token)}`); }
   catch (e) {
@@ -247,7 +247,7 @@ async function renderApproval() {
     } catch (e) { err.textContent = e.message; ev.target.closest('.approve-card').querySelectorAll('button').forEach((b) => { b.disabled = false; }); }
   };
   body.replaceChildren(h('div', { class: 'approve-card' },
-    h('p', {}, 'Alguém pediu acesso ao Cordial como atendente e já confirmou que controla o e-mail abaixo. Confira os dados antes de decidir.'),
+    h('p', {}, 'Alguém pediu acesso ao Inside Chat como atendente e já confirmou que controla o e-mail abaixo. Confira os dados antes de decidir.'),
     h('dl', {}, h('dt', {}, 'Nome'), h('dd', {}, info.name), h('dt', {}, 'E-mail'), h('dd', {}, info.email), h('dt', {}, 'Pedido em'), h('dd', {}, fmtTime(info.requestedAt))),
     err,
     h('div', { class: 'row-actions' }, h('button', { class: 'btn', onclick: decide('approve') }, 'Aprovar acesso'), h('button', { class: 'btn ghost', onclick: decide('reject') }, 'Recusar')),
@@ -261,7 +261,7 @@ async function renderVerify() {
   const token = new URLSearchParams(location.search).get('t') ?? '';
   const body = h('div', {}, loading());
   root.append(authShell([h('h1', {}, 'Confirmar e-mail'), body]));
-  const home = h('p', { class: 'auth-switch' }, h('a', { href: '/' }, 'Ir para o Cordial'));
+  const home = h('p', { class: 'auth-switch' }, h('a', { href: '/' }, 'Ir para o Inside Chat'));
   let info;
   try { info = await api('GET', `/api/auth/verify?t=${encodeURIComponent(token)}`); }
   catch (e) {
@@ -283,7 +283,7 @@ async function renderVerify() {
     } catch (e) { err.textContent = e.message; btn.disabled = false; }
   } }, 'Confirmar e criar senha');
   const field = (label, input, help) => h('label', { class: 'field' }, label, input, help ? h('span', { class: 'help' }, help) : null);
-  body.replaceChildren(h('div', { class: 'approve-card' }, h('p', {}, 'Confirme que o pedido de acesso ao Cordial foi feito por você e escolha sua senha.'),
+  body.replaceChildren(h('div', { class: 'approve-card' }, h('p', {}, 'Confirme que o pedido de acesso ao Inside Chat foi feito por você e escolha sua senha.'),
     h('dl', {}, h('dt', {}, 'Nome'), h('dd', {}, info.name), h('dt', {}, 'E-mail'), h('dd', {}, info.email)),
     field('Senha', pass), field('Repita a senha', pass2), err, btn,
     h('p', { class: 'help' }, 'Se não foi você, feche esta página.')));
@@ -292,7 +292,7 @@ async function renderVerify() {
 function sidebar(page) {
   const link = (p, label) => h('a', { href: `#/${p}`, class: page === p ? 'active' : '', 'aria-current': page === p ? 'page' : null }, label);
   return h('aside', { class: 'side' },
-    h('div', { class: 'brand' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Cordial')),
+    h('div', { class: 'brand' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Inside ', h('b', {}, 'Chat'))),
     h('nav', { class: 'nav', 'aria-label': 'Principal' }, link('inbox', 'Caixa de entrada'), link('customers', 'Clientes'), link('metrics', 'Indicadores'),
       state.me.role === 'admin' ? link('admin', 'Administração') : null),
     h('div', { class: 'who' },
@@ -398,9 +398,9 @@ async function openConversation(id, keepComposer = false) {
     ? h('div', { class: 'banner', role: 'status' }, 'A janela de 24 h do WhatsApp está encerrada: só é possível enviar um template aprovado.') : null;
   if (!win.open && state.tab === 'text') state.tab = 'template';
 
-  thread.replaceChildren(head, msgs, banner, c.status === 'resolved'
+  thread.replaceChildren(...[head, msgs, banner, c.status === 'resolved'
     ? h('div', { class: 'banner', role: 'status' }, 'Conversa resolvida. Reabra para responder (notas internas continuam disponíveis).') : null,
-  composer(id, win, draft));
+  composer(id, win, draft)].filter(Boolean)); // replaceChildren transformaria null no texto "null"
   msgs.scrollTop = msgs.scrollHeight;
 }
 

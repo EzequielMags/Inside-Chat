@@ -1,4 +1,4 @@
-# Cordial — plano do MVP
+# Inside Chat — plano do MVP
 
 Caixa de entrada compartilhada para atendimento via WhatsApp Business Platform (Cloud API oficial da Meta).
 O Integgri é usado apenas como referência conceitual do tipo de produto; nome, interface e textos aqui são próprios.

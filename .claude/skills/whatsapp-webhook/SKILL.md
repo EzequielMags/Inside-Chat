@@ -1,6 +1,6 @@
 ---
 name: whatsapp-webhook
-description: Cria ou altera o recebimento de eventos da WhatsApp Cloud API (mensagens, status, novos tipos de mensagem) no Cordial, com assinatura HMAC, idempotência e resposta rápida. Use ao mexer em /webhooks/whatsapp, parseWebhook, ingestInbound ou applyStatus.
+description: Cria ou altera o recebimento de eventos da WhatsApp Cloud API (mensagens, status, novos tipos de mensagem) no Inside Chat, com assinatura HMAC, idempotência e resposta rápida. Use ao mexer em /webhooks/whatsapp, parseWebhook, ingestInbound ou applyStatus.
 ---
 
 # Webhook do WhatsApp

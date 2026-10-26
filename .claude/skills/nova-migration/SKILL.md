@@ -1,6 +1,6 @@
 ---
 name: nova-migration
-description: Cria ou altera tabelas, colunas e índices do banco SQLite do Cordial pelo array MIGRATIONS de src/db.ts (versionado por PRAGMA user_version). Use sempre que precisar mudar o schema.
+description: Cria ou altera tabelas, colunas e índices do banco SQLite do Inside Chat pelo array MIGRATIONS de src/db.ts (versionado por PRAGMA user_version). Use sempre que precisar mudar o schema.
 ---
 
 # Nova migration

@@ -1,6 +1,6 @@
 ---
 name: nova-rota
-description: Cria ou altera um endpoint da API do Cordial (Fastify) no padrão do projeto - sessão, CSRF, validação zod, permissão, HttpError, auditoria e evento SSE. Use ao adicionar ou mudar qualquer rota em src/app.ts.
+description: Cria ou altera um endpoint da API do Inside Chat (Fastify) no padrão do projeto - sessão, CSRF, validação zod, permissão, HttpError, auditoria e evento SSE. Use ao adicionar ou mudar qualquer rota em src/app.ts.
 ---
 
 # Nova rota da API
