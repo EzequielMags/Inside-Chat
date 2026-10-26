@@ -45,7 +45,7 @@ const empty = (title, hint) => h('div', { class: 'empty' }, h('strong', {}, titl
 const loading = (msg = 'Carregando…') => h('div', { class: 'loading', role: 'status' }, msg);
 
 // Cor de destaque: o laranja é o padrão; as outras trocam os tokens --brand* via [data-accent] (styles.css).
-const ACCENTS = [['orange', 'Laranja'], ['blue', 'Azul'], ['green', 'Verde'], ['purple', 'Roxo'], ['pink', 'Rosa']];
+const ACCENTS = [['orange', 'Laranja'], ['blue', 'Azul'], ['green', 'Verde'], ['purple', 'Roxo'], ['pink', 'Rosa'], ['red', 'Vermelho'], ['gray', 'Cinza'], ['lightblue', 'Azul claro'], ['lightgreen', 'Verde claro'], ['black', 'Preto']];
 function applyAccent(name, save = false) {
   const valid = ACCENTS.some(([k]) => k === name) ? name : 'orange';
   if (valid === 'orange') delete document.documentElement.dataset.accent; else document.documentElement.dataset.accent = valid;
