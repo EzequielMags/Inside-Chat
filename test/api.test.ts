@@ -146,3 +146,19 @@ test('indicadores: contagem e tempo de primeira resposta', async () => {
   assert.ok(m.firstResponse.samples >= 1);
   assert.ok(Array.isArray(m.perDay) && m.perDay.length >= 1);
 });
+
+test('ACEITAR: atômico (409 para o segundo), 404 fora da equipe, exige sessão e CSRF', async () => {
+  const { conversationId: id } = ingestInbound(db, { channel: 'whatsapp', phone: '5511900000077', body: 'oi', externalId: 'acc1' });
+  assert.equal((await call('admin@t.com', 'PATCH', `/api/conversations/${id}`, { teamId: 1 })).statusCode, 200); // equipe A (Ana)
+  assert.equal((await app.inject({ method: 'POST', url: `/api/conversations/${id}/accept`, headers: H })).statusCode, 401);
+  assert.equal((await app.inject({ method: 'POST', url: `/api/conversations/${id}/accept`, headers: { cookie: cookies['ana@t.com'] } })).statusCode, 403); // sem CSRF
+  assert.equal((await call('bia@t.com', 'POST', `/api/conversations/${id}/accept`)).statusCode, 404);            // outra equipe não vê
+  const ok = await call('ana@t.com', 'POST', `/api/conversations/${id}/accept`);
+  assert.equal(ok.statusCode, 200);
+  assert.equal(ok.json().status, 'in_progress'); assert.equal(ok.json().assignee_id, 2);
+  const again = await call('admin@t.com', 'POST', `/api/conversations/${id}/accept`);                             // já tem dono
+  assert.equal(again.statusCode, 409); assert.equal(again.json().code, 'already_taken');
+  assert.equal((db.prepare('SELECT assignee_id a FROM conversations WHERE id = ?').get(id) as any).a, 2);        // dono não foi sobrescrito
+  assert.ok(db.prepare("SELECT 1 FROM audit_log WHERE action = 'conversation.accept' AND entity_id = ?").get(id));
+  assert.equal((await call('ana@t.com', 'POST', '/api/conversations/99999/accept')).statusCode, 404);
+});

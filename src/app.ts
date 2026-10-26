@@ -13,7 +13,7 @@ import {
 } from './auth.ts';
 import {
   HttpError, applyStatus, getConversationFor, ingestInbound, listConversations, metrics, normalizePhone,
-  sendMessage, updateConversation, windowInfo, accessClause,
+  sendMessage, updateConversation, acceptConversation, windowInfo, accessClause,
 } from './domain.ts';
 import { bus, type AppEvent } from './events.ts';
 import type { Channel } from './channels/types.ts';
@@ -284,6 +284,8 @@ export async function buildApp({ db, channel, mailer = makeMailer(config), logge
     const msg = await sendMessage(db, channel, me(req), id.parse((req.params as any).id), body);
     return reply.status(201).send(msg);
   });
+
+  app.post('/api/conversations/:id/accept', async (req) => acceptConversation(db, me(req), id.parse((req.params as any).id)));
 
   app.patch('/api/conversations/:id', async (req) => {
     const patch = z.object({

@@ -68,8 +68,8 @@ export async function createSignup(db: Db, mailer: Mailer, input: SignupInput, l
   // Não aguarda o envio: o tempo de resposta não pode denunciar se o e-mail já tinha conta.
   mailer.send({
     to: email,
-    subject: 'Cordial: confirme seu e-mail',
-    text: `Olá, ${issued.name}!\n\nRecebemos um pedido de acesso ao Cordial com este e-mail. Para continuar, abra o link, confirme que foi você e escolha sua senha:\n${config.publicUrl}/verificar?t=${issued.token}\n\nDepois disso, o administrador vai analisar o pedido e você será avisado por e-mail. O link vale por ${config.approvalTtlHours} horas.\n\nSe NÃO foi você quem pediu, não clique no link: basta ignorar esta mensagem.`,
+    subject: 'Inside Chat: confirme seu e-mail',
+    text: `Olá, ${issued.name}!\n\nRecebemos um pedido de acesso ao Inside Chat com este e-mail. Para continuar, abra o link, confirme que foi você e escolha sua senha:\n${config.publicUrl}/verificar?t=${issued.token}\n\nDepois disso, o administrador vai analisar o pedido e você será avisado por e-mail. O link vale por ${config.approvalTtlHours} horas.\n\nSe NÃO foi você quem pediu, não clique no link: basta ignorar esta mensagem.`,
   }).catch((e) => log(`falha ao enviar e-mail de confirmação: ${(e as { code?: string }).code ?? 'erro'}`)); // sem o link no log
 }
 
@@ -102,8 +102,8 @@ export function verifyEmail(db: Db, mailer: Mailer, token: string, password: str
   });
   mailer.send({
     to: config.approvalEmail,
-    subject: 'Cordial: novo cadastro aguardando aprovação',
-    text: `Pedido de acesso ao Cordial (o solicitante confirmou que controla este e-mail):\n  Nome informado: "${oneLine(r.name)}"\n  E-mail: ${r.email}\n\nAprove somente se reconhecer quem está pedindo. Para aprovar ou recusar, abra o link abaixo (vale por ${config.approvalTtlHours} horas e só pode ser usado uma vez):\n${config.publicUrl}/aprovar?t=${approvalToken}\n\nSe não reconhece este pedido, recuse ou ignore este e-mail.`,
+    subject: 'Inside Chat: novo cadastro aguardando aprovação',
+    text: `Pedido de acesso ao Inside Chat (o solicitante confirmou que controla este e-mail):\n  Nome informado: "${oneLine(r.name)}"\n  E-mail: ${r.email}\n\nAprove somente se reconhecer quem está pedindo. Para aprovar ou recusar, abra o link abaixo (vale por ${config.approvalTtlHours} horas e só pode ser usado uma vez):\n${config.publicUrl}/aprovar?t=${approvalToken}\n\nSe não reconhece este pedido, recuse ou ignore este e-mail.`,
   }).catch((e) => log(`falha ao enviar e-mail de aprovação: ${(e as { code?: string }).code ?? 'erro'}`));
   return { name: r.name, email: r.email };
 }
@@ -127,10 +127,10 @@ export async function decideSignup(
     return u;
   });
   const text = decision === 'approve'
-    ? `Olá! Seu acesso ao Cordial foi aprovado. Entre em ${config.publicUrl} com o e-mail e a senha que você cadastrou.`
-    : `Olá! Seu pedido de acesso ao Cordial não foi aprovado. Em caso de dúvida, fale com o administrador.`;
+    ? `Olá! Seu acesso ao Inside Chat foi aprovado. Entre em ${config.publicUrl} com o e-mail e a senha que você cadastrou.`
+    : `Olá! Seu pedido de acesso ao Inside Chat não foi aprovado. Em caso de dúvida, fale com o administrador.`;
   // Só escreve a quem comprovou o e-mail (aprovar já exige isso); recusa de e-mail não confirmado fica só no painel.
-  if (decision === 'approve' || user.email_verified_at) mailer.send({ to: user.email, subject: decision === 'approve' ? 'Cordial: acesso aprovado' : 'Cordial: cadastro não aprovado', text }).catch(() => {});
+  if (decision === 'approve' || user.email_verified_at) mailer.send({ to: user.email, subject: decision === 'approve' ? 'Inside Chat: acesso aprovado' : 'Inside Chat: cadastro não aprovado', text }).catch(() => {});
   return { name: user.name, email: user.email };
 }
 
@@ -151,7 +151,7 @@ export function reopenSignup(db: Db, mailer: Mailer, userId: number, actorId: nu
   });
   // Só avisa quem já confirmou o e-mail; sem link, só informa. Falha de envio não desfaz a reabertura.
   if (reopened.verified) {
-    mailer.send({ to: reopened.email, subject: 'Cordial: seu pedido foi reaberto', text: `Olá! Seu pedido de acesso ao Cordial foi reaberto. O administrador vai analisar novamente e você será avisado por e-mail.` }).catch(() => {});
+    mailer.send({ to: reopened.email, subject: 'Inside Chat: seu pedido foi reaberto', text: `Olá! Seu pedido de acesso ao Inside Chat foi reaberto. O administrador vai analisar novamente e você será avisado por e-mail.` }).catch(() => {});
   }
   return { verified: reopened.verified };
 }
@@ -179,7 +179,7 @@ export function resendApproval(db: Db, mailer: Mailer, token: string, log: (msg:
   if (!issued) return;
   mailer.send({
     to: config.approvalEmail,
-    subject: 'Cordial: novo link para aprovar cadastro',
+    subject: 'Inside Chat: novo link para aprovar cadastro',
     text: `Novo link de aprovação (o anterior deixou de valer):
   Nome informado: "${oneLine(issued.name)}"
   E-mail: ${issued.email}

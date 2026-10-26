@@ -24,7 +24,7 @@ if (seeded) {
 }
 
 await app.listen({ port: config.port, host: process.env.HOST ?? '127.0.0.1' });
-console.log(`Cordial no ar: http://localhost:${config.port}  (WhatsApp: modo ${config.whatsapp.mode})`);
+console.log(`Inside Chat no ar: http://localhost:${config.port}  (WhatsApp: modo ${config.whatsapp.mode})`);
 
 const shutdown = async () => { await app.close(); db.close(); process.exit(0); };
 process.on('SIGINT', shutdown);

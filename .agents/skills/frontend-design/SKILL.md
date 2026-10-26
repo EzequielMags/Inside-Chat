@@ -1,29 +1,30 @@
 ---
 name: frontend-design
-description: Cria ou altera telas e componentes da interface do Cordial (SPA em JS puro em public/) seguindo a identidade visual própria - tokens de cor, tipografia, layout da inbox, estados de UI, acessibilidade, responsivo e modo escuro. Use ao criar tela nova, redesenhar uma existente, adicionar componente ou mexer em public/styles.css e public/app.js.
+description: Cria ou altera telas e componentes da interface do Inside Chat (SPA em JS puro em public/) seguindo a identidade visual própria - tokens de cor, tipografia, layout da inbox, estados de UI, acessibilidade, responsivo e modo escuro. Use ao criar tela nova, redesenhar uma existente, adicionar componente ou mexer em public/styles.css e public/app.js.
 ---
 
 # Frontend Design
 
 Arquivos: `public/index.html` (casca), `public/styles.css` (tokens e componentes), `public/app.js` (SPA com `h()`), `public/logo.svg`.
 
-## Identidade do Cordial
+## Identidade do Inside Chat
 
 Profissional, calmo e denso o bastante para trabalhar o dia todo. Nada de visual "de WhatsApp" (verde `#25D366`, balões iguais, ícones da Meta) nem do Integgri: a referência é só o tipo de produto.
 
-- **Cor da marca**: verde-petróleo `--brand` (#0f5c5a) com destaque âmbar `--accent` (#e8a33d), usado só para atenção (não lidas, foco).
-- **Superfícies**: fundo `--bg` levemente acinzentado, cartões `--surface`, divisórias `--line` de 1px. Sombra quase nunca; borda resolve.
+- **Tema**: escuro, único (não há tema claro). Carvão quente (`--bg` #0d0c0b, `--surface` #161412, `--surface-2` #1f1c19), divisórias `--line` de 1px.
+- **Cor da marca**: laranja `--brand` (#ff7a1a) com texto escuro `--brand-ink`; para texto/links laranja sobre fundo escuro use `--brand-text` (#ff9a4d). `--accent` âmbar claro só para o anel de foco.
+- **Cor de destaque trocável**: botão de paleta na barra superior (`accentMenu()` em `app.js`), escolha salva em `localStorage` (`insidechat.accent`) e aplicada em `<html data-accent>`. Laranja é o padrão em `:root`; azul, verde, roxo e rosa só trocam os tokens `--brand*`, `--out` e `--glow-*` em `styles.css`. **Cor nova = bloco `[data-accent="x"]` com todos esses tokens**, texto ≥ 4,5:1 e, se a mensagem enviada ficar parecida com a nota interna, trocar também `--note`/`--note-line` (como no roxo). A logo continua laranja (identidade da marca).
 - **Tipografia**: `system-ui`, 14px, line-height 1.45. Títulos de página `h2` (padrão do navegador, margem `0 0 14px`); rótulos de filtro 12px `--muted`; cabeçalho de tabela 12px maiúsculo com `letter-spacing: .04em`.
 - **Raios**: 8px para controles, 10–14px para cartões, tabela e login, 999px para badges.
 - **Espaçamento**: múltiplos de 2 entre 4 e 28px (gaps 4/6/8/12, padding de página 20px, seções com 28px).
-- **Mensagens**: recebida `--in` à esquerda, enviada `--out` à direita, **nota interna** `--note` centralizada com borda tracejada. A nota precisa ser inconfundível com uma mensagem ao cliente: não mude esse contraste.
-- **Status**: `open` âmbar, `in_progress` marca, `resolved` `--ok`. Sempre com texto ("Aberta"), nunca só cor.
+- **Mensagens**: recebida `--in` à esquerda, enviada `--out` (marrom-alaranjado) à direita, **nota interna** `--note` (índigo, fora da família do laranja) centralizada com borda tracejada `--note-line`. A nota precisa ser inconfundível com uma mensagem ao cliente: não mude esse contraste.
+- **Status**: `open` âmbar (`--warn-*`), `in_progress` laranja da marca, `resolved` `--ok`. Sempre com texto ("Aberta"), nunca só cor.
 
 ## Regras técnicas (inegociáveis)
 
 1. **Sem `innerHTML`/`outerHTML`/`insertAdjacentHTML`.** Monte o DOM com `h(tag, props, ...filhos)`; texto entra como filho (vira `textContent`). A CSP (`script-src 'self'`, `style-src 'self'`) também proíbe `<script>`/`<style>` inline, `style=""` com conteúdo dinâmico e `onclick` em atributo: use `class` e `onclick` via `h()`.
 2. **Sem build e sem dependência de UI** (nada de React, Tailwind, CDN, Google Fonts). Ícones: SVG próprio em `public/` ou caractere Unicode com `aria-label`.
-3. **Cores só por token.** Nunca hex solto em regra nova; se faltar um token, crie em `:root` **e** no bloco `prefers-color-scheme: dark`. Dívida conhecida a corrigir quando mexer perto: `.badge.open`, `.badge.resolved` e `.banner` usam hex fixo e ficam ruins no escuro.
+3. **Cores só por token.** Nunca hex solto em regra nova; se faltar um token, crie em `:root` (tema escuro único).
 4. **Chamadas à API** só por `api(method, url, body)`, que já manda o header CSRF e trata 401.
 5. **Textos em pt-BR**, curtos, no tom do app ("Selecione uma conversa.", "Nenhuma conversa com esses filtros."). Para copy nova, siga a skill `design:ux-copy` se estiver disponível.
 
@@ -46,19 +47,19 @@ Profissional, calmo e denso o bastante para trabalhar o dia todo. Nada de visual
 
 ## Layout e responsivo
 
-- Shell: sidebar de 210px + conteúdo. Inbox: lista de 340px + conversa. Páginas de gestão: `.page` com `max-width: 1000px`.
-- Abaixo de 800px: a sidebar vira barra horizontal e a inbox mostra **ou** a lista **ou** a conversa (`.inbox.has-thread`). Toda tela nova precisa funcionar em 375px de largura sem rolagem horizontal da página.
+- Shell: barra superior `.top` (marca, navegação com ícone + rótulo, usuário e sair) + conteúdo. Inbox: lista de `minmax(340px, 26%)` (busca + filtro + ⋮, chips de status com contador, itens com barra lateral por status, botão flutuante "+") e conversa; sem conversa aberta, painel vazio com ilustração. Filtros avançados ficam recolhidos atrás do botão de filtro. Páginas de gestão: `.page` com `max-width: 1000px`. Ícones: `icon(nome)` em `app.js` (SVG por DOM).
+- Abaixo de 800px: a barra superior mostra só os ícones (rótulos viram texto para leitor de tela) e a inbox mostra **ou** a lista **ou** a conversa (`.inbox.has-thread`). Toda tela nova precisa funcionar em 375px de largura sem rolagem horizontal da página.
 - Texto longo (nome, telefone, preview) sempre com `text-overflow: ellipsis` ou `overflow-wrap: anywhere`.
 
 ## Componentes existentes (reuse antes de criar)
 
-`.btn` (`.ghost`, `.small`), `.badge`, `.unread`, `.card`/`.cards`, `.bars`, `table`, `.form-row`, `.section`, `.filters`, `.tabs`, `.banner`, `.empty`, `.err`, `.muted`, `.msg` (`.out`, `.note`). Componente novo: classe curta no mesmo arquivo `styles.css`, agrupada sob o comentário da área (`/* inbox */`, `/* tabelas e cartões */`).
+`.btn` (`.ghost`, `.small`), `.icon-btn`, `.chip`, `.fab`, `.menu`, `.badge`, `.unread`, `.card`/`.cards`, `.bars`, `table`, `.form-row`, `.section`, `.filters`, `.tabs`, `.banner`, `.empty`, `.err`, `.muted`, `.msg` (`.out`, `.note`). Componente novo: classe curta no mesmo arquivo `styles.css`, agrupada sob o comentário da área (`/* inbox */`, `/* tabelas e cartões */`).
 
 ## Passo a passo
 
 1. Leia a tela vizinha em `app.js` e copie o padrão (`<nome>View(main)`, rota por `location.hash`).
 2. Esboce os 4 estados e o comportamento em 375px antes de codar.
 3. Implemente reusando componentes; tokens novos nos dois temas.
-4. Rode o app (`npm start`, modo mock, "Simular cliente") e confira no navegador, em claro e escuro, desktop e 375px, navegando só pelo teclado.
+4. Rode o app (`npm start`, modo mock, "Simular cliente") e confira no navegador, no tema escuro, desktop e 375px, navegando só pelo teclado.
 5. Se mexeu em algo que mostra dado de cliente, confirme que o backend filtra por permissão (skill `permissao`): a UI esconder não é proteção.
 6. Feche com a skill `pronto`.

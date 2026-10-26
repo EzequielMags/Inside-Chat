@@ -1,4 +1,4 @@
-// Cordial — SPA sem build. Todo conteúdo dinâmico entra via textContent (sem innerHTML) para evitar XSS.
+// Inside Chat — SPA sem build. Todo conteúdo dinâmico entra via textContent (sem innerHTML) para evitar XSS.
 
 // ---------- utilidades ----------
 function h(tag, props = {}, ...kids) {
@@ -27,7 +27,7 @@ async function api(method, url, body) {
   return data;
 }
 
-const STATUS = { open: 'Aberta', in_progress: 'Em andamento', resolved: 'Resolvida' };
+const STATUS = { open: 'Aguardando', in_progress: 'Em atendimento', resolved: 'Resolvida' };
 const USER_STATUS = { pending: 'Aguardando', approved: 'Ativo', rejected: 'Recusado' };
 const fmtTime = (iso) => new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 const fmtDay = (iso) => new Date(iso).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
@@ -44,13 +44,74 @@ const opt = (value, label, sel) => h('option', { value, selected: sel }, label);
 const empty = (title, hint) => h('div', { class: 'empty' }, h('strong', {}, title), hint ? h('span', {}, hint) : null);
 const loading = (msg = 'Carregando…') => h('div', { class: 'loading', role: 'status' }, msg);
 
+// Cor de destaque: o laranja é o padrão; as outras trocam os tokens --brand* via [data-accent] (styles.css).
+const ACCENTS = [['orange', 'Laranja'], ['blue', 'Azul'], ['green', 'Verde'], ['purple', 'Roxo'], ['pink', 'Rosa'], ['red', 'Vermelho'], ['gray', 'Cinza'], ['lightblue', 'Azul claro'], ['lightgreen', 'Verde claro'], ['black', 'Preto']];
+function applyAccent(name, save = false) {
+  const valid = ACCENTS.some(([k]) => k === name) ? name : 'orange';
+  if (valid === 'orange') delete document.documentElement.dataset.accent; else document.documentElement.dataset.accent = valid;
+  if (save) { try { localStorage.setItem('insidechat.accent', valid); } catch { /* sem armazenamento: vale só nesta sessão */ } }
+  return valid;
+}
+const currentAccent = () => document.documentElement.dataset.accent ?? 'orange';
+try { applyAccent(localStorage.getItem('insidechat.accent')); } catch { /* ignora */ }
+
+// Ícones e ilustração próprios, montados por DOM (sem innerHTML e sem dependência de UI).
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svg(tag, attrs = {}, ...kids) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  for (const kid of kids.flat()) if (kid) el.append(kid);
+  return el;
+}
+const ICONS = {
+  search: [['circle', { cx: 11, cy: 11, r: 7 }], ['path', { d: 'M20 20l-3.5-3.5' }]],
+  filter: [['path', { d: 'M3 5h18l-7 8v6l-4-2v-4z' }]],
+  more: [['path', { d: 'M12 5h.01M12 12h.01M12 19h.01', 'stroke-width': 3 }]],
+  plus: [['path', { d: 'M12 5v14M5 12h14' }]],
+  chat: [['path', { d: 'M4 5h16v11H9l-5 4V5z' }]],
+  users: [['circle', { cx: 9, cy: 8, r: 3.2 }], ['path', { d: 'M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6' }], ['circle', { cx: 17, cy: 9, r: 2.4 }], ['path', { d: 'M17 14.2c2.4 0 4 1.8 4 4.3' }]],
+  chart: [['path', { d: 'M5 20V10M12 20V4M19 20v-7' }]],
+  shield: [['path', { d: 'M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z' }]],
+  palette: [['path', { d: 'M12 3a9 9 0 1 0 0 18c1.2 0 2-.8 2-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z' }], ['path', { d: 'M7.5 11h.01M10 7h.01M15 7h.01', 'stroke-width': 3 }]],
+  back: [['path', { d: 'M15 5l-7 7 7 7' }]],
+  right: [['path', { d: 'M9 5l7 7-7 7' }]],
+  send: [['path', { d: 'M4 12l16-8-6 16-3-7z' }]],
+  panel: [['path', { d: 'M4 5h16v14H4zM15 5v14' }]],
+  clock: [['path', { d: 'M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z' }]],
+  logout: [['path', { d: 'M9 4H5v16h4M16 8l4 4-4 4M20 12H9' }]],
+};
+const icon = (name) => svg('svg', { viewBox: '0 0 24 24', class: 'ico', 'aria-hidden': 'true', focusable: 'false' }, ICONS[name].map(([tag, a]) => svg(tag, a)));
+
+function chatIllustration() {
+  return svg('svg', { viewBox: '0 0 220 180', class: 'ill', 'aria-hidden': 'true', focusable: 'false' },
+    svg('rect', { x: 20, y: 20, width: 130, height: 84, rx: 16, class: 'ill-card' }),
+    svg('path', { d: 'M44 104l-4 22 26-22z', class: 'ill-card' }),
+    svg('rect', { x: 38, y: 38, width: 70, height: 8, rx: 4, class: 'ill-line' }),
+    svg('rect', { x: 38, y: 56, width: 96, height: 8, rx: 4, class: 'ill-soft' }),
+    svg('rect', { x: 38, y: 74, width: 54, height: 8, rx: 4, class: 'ill-soft' }),
+    svg('rect', { x: 80, y: 84, width: 120, height: 72, rx: 16, class: 'ill-solid' }),
+    svg('path', { d: 'M176 156l6 18-26-18z', class: 'ill-solid' }),
+    svg('circle', { cx: 118, cy: 120, r: 7, class: 'ill-dot' }), svg('circle', { cx: 140, cy: 120, r: 7, class: 'ill-dot' }), svg('circle', { cx: 162, cy: 120, r: 7, class: 'ill-dot' }));
+}
+const emptyThread = () => h('div', { class: 'empty thread-empty' }, chatIllustration(),
+  h('strong', {}, 'Selecione uma conversa para começar.'), h('span', {}, 'Escolha uma na lista ou toque em + para iniciar outra.'));
+
+// Hoje mostra só a hora; antes disso, a data curta (lista de conversas).
+const fmtShort = (iso) => {
+  const d = new Date(iso);
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+};
+
 const state = {
   me: null, users: [], teams: [], templates: [],
-  filters: { q: '', status: '', assignee: '', teamId: '', from: '', to: '', weekend: '' },
+  filters: { q: '', status: 'in_progress', assignee: '', teamId: '', from: '', to: '', weekend: '' },
   list: [], current: null, tab: 'text', es: null, authMode: 'login',
 };
 
 const root = document.getElementById('app');
+try { state.detailsOpen = localStorage.getItem('insidechat.details') !== '0'; } catch { state.detailsOpen = true; }
 
 // ---------- diálogo (substitui alert/prompt/confirm) ----------
 /**
@@ -147,7 +208,7 @@ function render() {
   }
   const { page } = route();
   const main = h('main', { class: 'main' });
-  root.append(h('div', { class: 'shell' }, sidebar(page), main));
+  root.append(h('div', { class: 'shell' }, topbar(page), main));
   const views = { inbox: inboxView, customers: customersView, metrics: metricsView, admin: adminView };
   (views[page] ?? inboxView)(main);
 }
@@ -156,11 +217,11 @@ function render() {
 function authShell(content) {
   return h('div', { class: 'auth' },
     h('section', { class: 'auth-panel', 'aria-hidden': 'true' },
-      h('div', { class: 'brand' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Cordial')),
-      h('h2', {}, 'Atendimento organizado, equipe alinhada.'),
+      h('div', { class: 'brand' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Inside ', h('b', {}, 'Chat'))),
+      h('h2', {}, 'Atendimento organizado, ', h('em', {}, 'equipe alinhada.')),
       h('ul', {}, h('li', {}, 'Uma caixa de entrada para todo o time'), h('li', {}, 'Histórico do cliente sempre à mão'), h('li', {}, 'Notas internas que o cliente nunca vê'))),
     h('main', { class: 'auth-main' }, h('div', { class: 'auth-card' },
-      h('div', { class: 'brand brand-mobile' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Cordial')), content)));
+      h('div', { class: 'brand brand-mobile' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Inside ', h('b', {}, 'Chat'))), content)));
 }
 
 function authView() {
@@ -206,7 +267,7 @@ function authView() {
   field('E-mail', email), mode === 'login' ? field('Senha', pass) : null, notice, err, submit);
 
   return authShell([
-    h('div', {}, h('h1', {}, mode === 'login' ? 'Entrar no Cordial' : 'Criar acesso'),
+    h('div', {}, h('h1', {}, mode === 'login' ? 'Entrar no Inside Chat' : 'Criar acesso'),
       h('p', { class: 'muted' }, mode === 'login' ? 'Use o e-mail e a senha da sua conta.' : 'Você confirma seu e-mail e escolhe a senha pelo link que enviaremos. O acesso só é liberado depois que o administrador aprovar.')),
     form,
     h('p', { class: 'auth-switch' }, mode === 'login' ? 'Ainda não tem acesso? ' : 'Já tem conta? ',
@@ -222,7 +283,7 @@ async function renderApproval() {
   root.append(authShell([h('h1', {}, 'Aprovar cadastro'), body]));
   const done = (cls, title, msg) => body.replaceChildren(
     h('div', { class: `notice ${cls}`, role: 'status' }, h('strong', {}, title), msg),
-    h('p', { class: 'auth-switch' }, h('a', { href: '/' }, 'Ir para o Cordial')));
+    h('p', { class: 'auth-switch' }, h('a', { href: '/' }, 'Ir para o Inside Chat')));
   let info;
   try { info = await api('GET', `/api/auth/approval?t=${encodeURIComponent(token)}`); }
   catch (e) {
@@ -247,7 +308,7 @@ async function renderApproval() {
     } catch (e) { err.textContent = e.message; ev.target.closest('.approve-card').querySelectorAll('button').forEach((b) => { b.disabled = false; }); }
   };
   body.replaceChildren(h('div', { class: 'approve-card' },
-    h('p', {}, 'Alguém pediu acesso ao Cordial como atendente e já confirmou que controla o e-mail abaixo. Confira os dados antes de decidir.'),
+    h('p', {}, 'Alguém pediu acesso ao Inside Chat como atendente e já confirmou que controla o e-mail abaixo. Confira os dados antes de decidir.'),
     h('dl', {}, h('dt', {}, 'Nome'), h('dd', {}, info.name), h('dt', {}, 'E-mail'), h('dd', {}, info.email), h('dt', {}, 'Pedido em'), h('dd', {}, fmtTime(info.requestedAt))),
     err,
     h('div', { class: 'row-actions' }, h('button', { class: 'btn', onclick: decide('approve') }, 'Aprovar acesso'), h('button', { class: 'btn ghost', onclick: decide('reject') }, 'Recusar')),
@@ -261,7 +322,7 @@ async function renderVerify() {
   const token = new URLSearchParams(location.search).get('t') ?? '';
   const body = h('div', {}, loading());
   root.append(authShell([h('h1', {}, 'Confirmar e-mail'), body]));
-  const home = h('p', { class: 'auth-switch' }, h('a', { href: '/' }, 'Ir para o Cordial'));
+  const home = h('p', { class: 'auth-switch' }, h('a', { href: '/' }, 'Ir para o Inside Chat'));
   let info;
   try { info = await api('GET', `/api/auth/verify?t=${encodeURIComponent(token)}`); }
   catch (e) {
@@ -283,71 +344,183 @@ async function renderVerify() {
     } catch (e) { err.textContent = e.message; btn.disabled = false; }
   } }, 'Confirmar e criar senha');
   const field = (label, input, help) => h('label', { class: 'field' }, label, input, help ? h('span', { class: 'help' }, help) : null);
-  body.replaceChildren(h('div', { class: 'approve-card' }, h('p', {}, 'Confirme que o pedido de acesso ao Cordial foi feito por você e escolha sua senha.'),
+  body.replaceChildren(h('div', { class: 'approve-card' }, h('p', {}, 'Confirme que o pedido de acesso ao Inside Chat foi feito por você e escolha sua senha.'),
     h('dl', {}, h('dt', {}, 'Nome'), h('dd', {}, info.name), h('dt', {}, 'E-mail'), h('dd', {}, info.email)),
     field('Senha', pass), field('Repita a senha', pass2), err, btn,
     h('p', { class: 'help' }, 'Se não foi você, feche esta página.')));
 }
 
-function sidebar(page) {
-  const link = (p, label) => h('a', { href: `#/${p}`, class: page === p ? 'active' : '', 'aria-current': page === p ? 'page' : null }, label);
-  return h('aside', { class: 'side' },
-    h('div', { class: 'brand' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Cordial')),
-    h('nav', { class: 'nav', 'aria-label': 'Principal' }, link('inbox', 'Caixa de entrada'), link('customers', 'Clientes'), link('metrics', 'Indicadores'),
-      state.me.role === 'admin' ? link('admin', 'Administração') : null),
-    h('div', { class: 'who' },
-      h('div', {}, h('div', { class: 'name' }, state.me.name), h('div', { class: 'muted' }, state.me.role === 'admin' ? 'Administrador' : 'Atendente')),
-      h('button', { class: 'btn ghost small', onclick: async () => { await api('POST', '/api/auth/logout'); state.me = null; state.authMode = 'login'; render(); } }, 'Sair')),
+function accentMenu() {
+  const swatches = ACCENTS.map(([k, label]) => h('button', { class: 'swatch', role: 'menuitemradio', 'aria-pressed': String(currentAccent() === k), onclick: () => {
+    applyAccent(k, true);
+    swatches.forEach((b, i) => b.setAttribute('aria-pressed', String(ACCENTS[i][0] === k)));
+    menu.classList.add('hidden');
+  } }, h('i', { class: `sw sw-${k}` }), label));
+  const menu = h('div', { class: 'menu hidden', role: 'menu', 'aria-label': 'Cor do sistema' }, swatches);
+  const btn = h('button', { class: 'icon-btn', 'aria-label': 'Cor do sistema', 'aria-haspopup': 'menu', title: 'Cor do sistema', onclick: (ev) => { ev.stopPropagation(); menu.classList.toggle('hidden'); } }, icon('palette'));
+  const close = (ev) => { if (!menu.isConnected) return document.removeEventListener('click', close); if (!menu.contains(ev.target)) menu.classList.add('hidden'); };
+  document.addEventListener('click', close);
+  menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { menu.classList.add('hidden'); btn.focus(); } });
+  return h('div', { class: 'menu-wrap accent-wrap' }, btn, menu);
+}
+
+function topbar(page) {
+  const link = (p, label, ico) => h('a', { href: `#/${p}`, class: page === p ? 'active' : '', 'aria-current': page === p ? 'page' : null }, icon(ico), h('span', {}, label));
+  return h('header', { class: 'top' },
+    h('div', { class: 'brand' }, h('img', { src: '/logo.svg', alt: '' }), h('span', {}, 'Inside ', h('b', {}, 'Chat'))),
+    h('nav', { class: 'nav', 'aria-label': 'Principal' }, link('inbox', 'Conversas', 'chat'), link('customers', 'Clientes', 'users'), link('metrics', 'Indicadores', 'chart'),
+      state.me.role === 'admin' ? link('admin', 'Administração', 'shield') : null),
+    h('div', { class: 'who' }, accentMenu(),
+      h('div', { class: 'who-text' }, h('div', { class: 'name' }, state.me.name), h('div', { class: 'muted' }, state.me.role === 'admin' ? 'Administrador' : 'Atendente')),
+      h('div', { class: 'avatar small', 'aria-hidden': 'true' }, initials(state.me.name)),
+      h('button', { class: 'icon-btn', 'aria-label': 'Sair', title: 'Sair', onclick: async () => { await api('POST', '/api/auth/logout'); state.me = null; state.authMode = 'login'; render(); } }, icon('logout'))),
   );
 }
 
 // ---------- caixa de entrada ----------
+// Abas da lista = status da conversa (Atendimento, Aguardando, Resolvidas).
+const CHIPS = [['in_progress', 'Atendimento'], ['open', 'Aguardando'], ['resolved', 'Resolvidas']];
+const ADV_KEYS = ['assignee', 'teamId', 'weekend', 'from', 'to'];
+
+// Botão com menu suspenso (⋮). Fecha ao clicar fora ou com Esc.
+function popMenu(content, label, items) {
+  const menu = h('div', { class: 'menu hidden', role: 'menu', 'aria-label': label },
+    items.filter(Boolean).map(([text, fn]) => h('button', { role: 'menuitem', onclick: () => { menu.classList.add('hidden'); fn(); } }, text)));
+  const btn = h('button', { class: 'icon-btn', 'aria-label': label, 'aria-haspopup': 'menu', title: label, onclick: (ev) => { ev.stopPropagation(); menu.classList.toggle('hidden'); } }, content);
+  const close = (ev) => { if (!menu.isConnected) return document.removeEventListener('click', close); if (!menu.contains(ev.target)) menu.classList.add('hidden'); };
+  document.addEventListener('click', close);
+  menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { menu.classList.add('hidden'); btn.focus(); } });
+  return h('div', { class: 'menu-wrap' }, btn, menu);
+}
+
+function toggleDetails(btn) {
+  state.detailsOpen = !state.detailsOpen;
+  try { localStorage.setItem('insidechat.details', state.detailsOpen ? '1' : '0'); } catch { /* vale só nesta sessão */ }
+  document.querySelector('.inbox')?.classList.toggle('has-details', state.detailsOpen);
+  document.querySelectorAll('.panel-toggle').forEach((b) => b.setAttribute('aria-pressed', String(state.detailsOpen)));
+  if (!state.detailsOpen) btn?.focus();
+}
+
 function inboxView(main) {
   const { arg } = route();
-  const wrap = h('div', { class: `inbox ${arg ? 'has-thread' : ''}` });
+  const wrap = h('div', { class: `inbox ${arg ? 'has-thread' : ''} ${arg && state.detailsOpen ? 'has-details' : ''}` });
   main.append(wrap);
   const f = state.filters;
-  const bind = (key, el) => { el.addEventListener('change', () => { f[key] = el.value; refreshList(); }); return el; };
-  const search = h('input', { type: 'search', placeholder: 'Buscar nome, telefone ou texto', value: f.q, class: 'wide', 'aria-label': 'Buscar conversas' });
+  const bind = (key, el) => { el.addEventListener('change', () => { f[key] = el.value; refreshList(); syncFilterBtn(); }); return el; };
+  const search = h('input', { type: 'search', placeholder: 'Pesquisar', value: f.q, 'aria-label': 'Buscar conversas por nome, telefone ou texto' });
   let t; search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { f.q = search.value; refreshList(); }, 250); });
   const sel = (key, label, options) => h('label', {}, label, bind(key, h('select', {}, options.map(([v, l]) => opt(v, l, f[key] === String(v))))));
   const activeUsers = state.users.filter((u) => u.active);
-  const filters = h('div', { class: 'filters' }, search,
-    sel('status', 'Status', [['', 'Todos'], ...Object.entries(STATUS)]),
+  const advanced = h('div', { class: `filters ${ADV_KEYS.some((k) => f[k]) ? '' : 'hidden'}`, id: 'adv-filters' },
     sel('assignee', 'Responsável', [['', 'Todos'], ['me', 'Eu'], ['none', 'Sem responsável'], ...activeUsers.map((u) => [u.id, u.name])]),
     sel('teamId', 'Equipe', [['', 'Todas'], ...state.teams.map((x) => [x.id, x.name])]),
     sel('weekend', 'Plantão', [['', 'Qualquer dia'], ['both', 'Sáb + Dom'], ['sat', 'Sábado'], ['sun', 'Domingo']]),
+    h('span'),
     h('label', {}, 'De', bind('from', h('input', { type: 'date', value: f.from }))),
-    h('label', {}, 'Até', bind('to', h('input', { type: 'date', value: f.to }))),
-  );
-  const tools = h('div', { class: 'filters' }, h('div', { class: 'tools' },
-    h('button', { class: 'btn small ghost', onclick: startConversation }, 'Nova conversa'),
-    state.me.role === 'admin' && state.me.waMode === 'mock'
-      ? h('button', { class: 'btn small ghost', onclick: simulate, title: 'Disponível só em modo de desenvolvimento' }, 'Simular cliente') : null));
+    h('label', {}, 'Até', bind('to', h('input', { type: 'date', value: f.to }))));
+  const filterBtn = h('button', { class: 'icon-btn', 'aria-label': 'Filtros', 'aria-controls': 'adv-filters', title: 'Filtros', onclick: () => {
+    advanced.classList.toggle('hidden'); filterBtn.setAttribute('aria-expanded', String(!advanced.classList.contains('hidden')));
+  } }, icon('filter'), h('i', { class: 'dot hidden' }));
+  const syncFilterBtn = () => { filterBtn.querySelector('.dot').classList.toggle('hidden', !ADV_KEYS.some((k) => f[k])); };
+  filterBtn.setAttribute('aria-expanded', String(!advanced.classList.contains('hidden'))); syncFilterBtn();
+
+  // menu ⋮: limpar filtros e (só em dev) simular cliente
+  const more = popMenu(icon('more'), 'Mais opções', [
+    ['Limpar filtros', () => { Object.assign(f, { q: '', status: 'in_progress', assignee: '', teamId: '', from: '', to: '', weekend: '' }); render(); }],
+    state.me.role === 'admin' && state.me.waMode === 'mock' ? ['Simular cliente', simulate] : null,
+  ]);
+
+  const searchRow = h('div', { class: 'searchrow' }, h('label', { class: 'search' }, icon('search'), search), filterBtn, more);
+  const chips = h('div', { class: 'chips', id: 'chips', role: 'group', 'aria-label': 'Filtrar por status' });
+  const fab = h('button', { class: 'fab', 'aria-label': 'Nova conversa', title: 'Nova conversa', onclick: startConversation }, icon('plus'));
   wrap.append(
-    h('section', { class: 'list-col', 'aria-label': 'Conversas' }, filters, tools, h('div', { class: 'items', id: 'items' }, loading())),
-    h('section', { class: 'thread', id: 'thread', 'aria-label': 'Conversa' }, empty('Selecione uma conversa', 'Escolha uma na lista ou inicie uma nova.')),
+    h('section', { class: 'list-col', 'aria-label': 'Conversas' }, searchRow, chips, advanced, h('div', { class: 'items', id: 'items' }, loading()), fab),
+    h('section', { class: 'thread', id: 'thread', 'aria-label': 'Conversa' }, emptyThread()),
+    h('aside', { class: 'details', id: 'details', 'aria-label': 'Detalhes do cliente' }),
   );
   refreshList();
   if (arg) openConversation(Number(arg));
 }
 
+function renderChips() {
+  const box = document.getElementById('chips');
+  if (!box) return;
+  const all = state.listAll ?? [];
+  const count = (st) => all.filter((c) => c.status === st).length;
+  box.replaceChildren(...CHIPS.map(([v, label]) => h('button', {
+    class: `chip ${state.filters.status === v ? 'on' : ''}`, 'aria-pressed': String(state.filters.status === v),
+    onclick: () => { state.filters.status = v; refreshList(); },
+  }, label, h('span', { class: 'count' }, count(v)))));
+}
+
+// ACEITAR: o atendente assume a conversa que estava aguardando e ela passa para Atendimento.
+async function acceptConversation(id) {
+  try {
+    await api('POST', `/api/conversations/${id}/accept`);
+    state.filters.status = 'in_progress';
+    const target = `#/inbox/${id}`;
+    if (location.hash === target) { await openConversation(id); await refreshList(); } else location.hash = target;
+  } catch (e) { await refreshList(); document.getElementById('items')?.prepend(h('div', { class: 'err list-err', role: 'alert' }, e.message)); }
+}
+
 async function refreshList() {
   const box = document.getElementById('items');
   if (!box) return;
-  const qs = new URLSearchParams(Object.entries(state.filters).filter(([, v]) => v));
-  try { state.list = await api('GET', `/api/conversations?${qs}`); }
+  // O status é filtrado aqui (não na API) para os contadores dos chips mostrarem todos os status.
+  const qs = new URLSearchParams(Object.entries(state.filters).filter(([k, v]) => v && k !== 'status'));
+  try { state.listAll = await api('GET', `/api/conversations?${qs}`); }
   catch (e) { box.replaceChildren(h('div', { class: 'err', role: 'alert' }, e.message)); return; }
+  state.list = state.filters.status ? state.listAll.filter((c) => c.status === state.filters.status) : state.listAll;
+  renderChips();
   const selected = Number(route().arg);
-  box.replaceChildren(...(state.list.length ? state.list.map((c) => h('button', {
-    class: `item ${c.id === selected ? 'sel' : ''}`, 'aria-current': c.id === selected ? 'true' : null, onclick: () => { location.hash = `#/inbox/${c.id}`; },
+  const open = (c) => { location.hash = `#/inbox/${c.id}`; };
+  box.replaceChildren(...(state.list.length ? state.list.map((c) => h('div', {
+    class: `item s-${c.status} ${c.id === selected ? 'sel' : ''}`, role: 'button', tabindex: '0', 'aria-current': c.id === selected ? 'true' : null,
+    onclick: () => open(c), onkeydown: (ev) => { if (ev.target === ev.currentTarget && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); open(c); } },
   },
   h('div', { class: 'avatar', 'aria-hidden': 'true' }, initials(c.customer_name)),
   h('div', {},
-    h('div', { class: 'row' }, h('span', { class: 'name' }, c.customer_name), c.unread_count ? h('span', { class: 'unread', 'aria-label': `${c.unread_count} não lidas` }, c.unread_count) : null),
-    h('div', { class: 'prev' }, c.last_preview || '—'),
-    h('div', { class: 'row meta' }, h('span', { class: `badge ${c.status}` }, STATUS[c.status]), h('span', {}, c.assignee_name ?? 'Sem responsável'), h('span', {}, fmtTime(c.last_message_at))))))
-    : [empty('Nenhuma conversa com esses filtros', 'Ajuste os filtros ou aguarde novas mensagens.')]));
+    h('div', { class: 'row' }, h('span', { class: 'name' }, c.customer_name), h('time', { class: 'when', datetime: c.last_message_at, title: fmtTime(c.last_message_at) }, fmtShort(c.last_message_at))),
+    h('div', { class: 'row' }, h('span', { class: 'prev' }, c.last_preview || '—'), c.unread_count ? h('span', { class: 'unread', 'aria-label': `${c.unread_count} não lidas` }, c.unread_count) : null),
+    h('div', { class: 'row meta' }, h('span', { class: `badge ${c.status}` }, STATUS[c.status]),
+      c.status === 'open' ? null : h('span', {}, c.assignee_name ?? 'Sem responsável'),
+      c.status === 'open' ? h('button', { class: 'btn ghost small accept', onclick: (ev) => { ev.stopPropagation(); acceptConversation(c.id); } }, 'ACEITAR') : null))))
+    : [empty(`Nenhuma conversa em ${CHIPS.find(([v]) => v === state.filters.status)?.[1] ?? 'conversas'}`, 'Ajuste os filtros ou aguarde novas mensagens.')]));
+}
+
+const fmtLeft = (iso) => {
+  const ms = Math.max(0, new Date(iso).getTime() - Date.now());
+  return `${Math.floor(ms / 3_600_000)} h ${String(Math.floor((ms % 3_600_000) / 60_000)).padStart(2, '0')} min`;
+};
+
+function renderDetails(data, assignee) {
+  const aside = document.getElementById('details');
+  if (!aside) return;
+  const { conversation: c, customer, window: win } = data;
+  const team = state.teams.find((x) => x.id === c.team_id);
+  const row = (k, v) => h('div', { class: 'kv' }, h('span', { class: 'muted' }, k), h('strong', {}, v));
+  const section = (title, ...kids) => h('section', { class: 'dp-sec' }, h('h4', {}, title), ...kids);
+  const pct = win.open ? Math.max(2, Math.min(100, ((new Date(win.expiresAt) - Date.now()) / (24 * 3_600_000)) * 100)) : 0;
+  const bar = h('div', { class: 'bar-track' }); const fill = h('i', { class: win.open ? '' : 'closed' }); fill.style.width = `${pct}%`; bar.append(fill);
+  const prev = h('div', { class: 'dp-prev' }, h('span', { class: 'muted' }, 'Carregando…'));
+  aside.replaceChildren(
+    h('div', { class: 'dp-head' }, h('h4', {}, 'Detalhes'),
+      h('button', { class: 'icon-btn', 'aria-label': 'Recolher painel de detalhes', title: 'Recolher', onclick: (ev) => toggleDetails(ev.currentTarget) }, icon('right'))),
+    h('div', { class: 'dp-profile' }, h('div', { class: 'avatar lg', 'aria-hidden': 'true' }, initials(customer.name)),
+      h('a', { class: 'dp-name', href: `#/customers/${customer.id}` }, customer.name), h('span', { class: 'muted' }, fmtPhone(customer.phone))),
+    section('Atendimento', row('Status', STATUS[c.status]), row('Responsável', assignee?.name ?? '—'), row('Equipe', team?.name ?? 'Sem equipe'), row('Cliente desde', new Date(customer.created_at).toLocaleDateString('pt-BR'))),
+    section('Janela de 24 h', bar, h('p', { class: 'help' }, win.open
+      ? `Texto livre liberado até ${fmtTime(win.expiresAt)}. Depois, só template aprovado.`
+      : 'Encerrada: só é possível enviar um template aprovado até o cliente escrever de novo.')),
+    section('Notas do cliente', h('p', { class: 'dp-notes' }, customer.notes || 'Sem observações.'), h('a', { href: `#/customers/${customer.id}` }, 'Editar no cadastro')),
+    section('Conversas anteriores', prev),
+  );
+  api('GET', `/api/customers/${customer.id}`).then(({ conversations }) => {
+    const others = conversations.filter((x) => x.id !== c.id).slice(0, 5);
+    prev.replaceChildren(...(others.length ? others.map((x) => h('a', { class: 'dp-conv', href: `#/inbox/${x.id}` },
+      h('span', {}, `#${x.id} · ${fmtShort(x.last_message_at)}`), h('span', { class: `badge ${x.status}` }, STATUS[x.status])))
+      : [h('span', { class: 'muted' }, 'Nenhuma.')]));
+  }).catch(() => prev.replaceChildren(h('span', { class: 'muted' }, 'Não foi possível carregar.')));
 }
 
 async function openConversation(id, keepComposer = false) {
@@ -361,22 +534,40 @@ async function openConversation(id, keepComposer = false) {
   if (data.conversation.unread_count) { api('POST', `/api/conversations/${id}/read`).then(refreshList).catch(() => {}); }
   const draft = keepComposer ? document.getElementById('draft')?.value : '';
   const { conversation: c, customer } = data;
-  const ctlErr = h('div', { class: 'err', role: 'alert' });
+  const ctlErr = h('div', { class: 'err head-err', role: 'alert' });
   const patch = async (body) => { ctlErr.textContent = ''; try { await api('PATCH', `/api/conversations/${id}`, body); } catch (e) { ctlErr.textContent = e.message; } };
   const activeUsers = state.users.filter((u) => u.active);
+  const assignee = state.users.find((u) => u.id === c.assignee_id);
+  const url = `/api/conversations/${id}`;
+  const askAssign = () => askForm({
+    title: 'Atribuir conversa', submit: 'Atribuir',
+    fields: [{ name: 'assigneeId', label: 'Responsável', type: 'select', value: c.assignee_id ?? '', options: [['', 'Sem responsável'], ...activeUsers.map((u) => [u.id, u.name])] }],
+    onSubmit: (v) => api('PATCH', url, { assigneeId: v.assigneeId ? Number(v.assigneeId) : null }),
+  });
+  const askTeam = () => askForm({
+    title: 'Mudar equipe', submit: 'Salvar',
+    fields: [{ name: 'teamId', label: 'Equipe', type: 'select', value: c.team_id ?? '', options: [['', 'Sem equipe'], ...state.teams.map((x) => [x.id, x.name])] }],
+    onSubmit: (v) => api('PATCH', url, { teamId: v.teamId ? Number(v.teamId) : null }),
+  });
 
+  const win = data.window;
+  const pill = h('span', { class: `win-pill ${win.open ? 'open' : 'closed'}` }, icon('clock'), win.open ? [h('span', { class: 'lbl' }, 'Janela aberta · '), fmtLeft(win.expiresAt)] : 'Janela fechada');
   const head = h('div', { class: 'thread-head' },
-    h('div', { class: 'who' },
-      h('button', { class: 'btn ghost small back', 'aria-label': 'Voltar para a lista', onclick: () => { location.hash = '#/inbox'; } }, '←'),
-      h('div', { class: 'avatar', 'aria-hidden': 'true' }, initials(customer.name)),
-      h('div', {}, h('h3', {}, h('a', { href: `#/customers/${customer.id}` }, customer.name)), h('div', { class: 'muted' }, fmtPhone(customer.phone)))),
-    h('div', { class: 'ctl' },
-      h('select', { 'aria-label': 'Status', onchange: (e) => patch({ status: e.target.value }) }, Object.entries(STATUS).map(([v, l]) => opt(v, l, c.status === v))),
-      h('select', { 'aria-label': 'Responsável', onchange: (e) => patch({ assigneeId: e.target.value ? Number(e.target.value) : null }) },
-        opt('', 'Sem responsável', !c.assignee_id), activeUsers.map((u) => opt(u.id, u.name, c.assignee_id === u.id))),
-      h('select', { 'aria-label': 'Equipe', onchange: (e) => patch({ teamId: e.target.value ? Number(e.target.value) : null }) },
-        opt('', 'Sem equipe', !c.team_id), state.teams.map((x) => opt(x.id, x.name, c.team_id === x.id)))),
-    ctlErr,
+    h('button', { class: 'icon-btn back', 'aria-label': 'Voltar para a lista', title: 'Voltar', onclick: () => { location.hash = '#/inbox'; } }, icon('back')),
+    h('div', { class: 'avatar', 'aria-hidden': 'true' }, initials(customer.name)),
+    h('div', { class: 'who-info' },
+      h('div', { class: 'row1' }, h('h3', {}, h('a', { href: `#/customers/${customer.id}` }, customer.name)), h('span', { class: 'ticket', title: 'Número do atendimento' }, `#${c.id}`)),
+      h('div', { class: 'row2' }, h('span', { class: 'muted' }, h('span', { class: 'lbl' }, 'Atribuído a: '), assignee?.name ?? '—'),
+        h('button', { class: 'icon-btn mini', 'aria-label': 'Atribuir conversa', title: 'Atribuir', onclick: askAssign }, icon('plus')), pill)),
+    h('div', { class: 'head-actions' },
+      c.status === 'resolved'
+        ? h('button', { class: 'btn ghost small', onclick: () => patch({ status: 'in_progress' }) }, 'Reabrir')
+        : h('button', { class: 'btn ghost small', onclick: () => patch({ status: 'resolved' }) }, 'Resolver'),
+      h('button', { class: 'icon-btn panel-toggle', 'aria-label': 'Painel de detalhes', 'aria-pressed': String(state.detailsOpen), title: 'Painel de detalhes', onclick: (ev) => toggleDetails(ev.currentTarget) }, icon('panel')),
+      popMenu(icon('more'), 'Mais opções da conversa', [
+        ['Atribuir…', askAssign], ['Mudar equipe…', askTeam],
+        c.status === 'open' ? null : ['Devolver para Aguardando', () => patch({ status: 'open', assigneeId: null })],
+      ])),
   );
 
   let lastDay = '';
@@ -388,36 +579,43 @@ async function openConversation(id, keepComposer = false) {
     const who = m.kind === 'note' ? `Nota interna · ${m.sender_name}` : m.direction === 'out' ? (m.sender_name ?? '') : '';
     const time = new Date(m.created_at).toLocaleTimeString('pt-BR', { timeStyle: 'short' });
     const st = m.delivery_status === 'failed' ? ` · não entregue${m.error ? `: ${m.error}` : ''}` : m.delivery_status === 'read' ? ' · lida' : m.delivery_status === 'delivered' ? ' · entregue' : '';
-    items.push(h('div', { class: `msg ${cls}` }, m.body,
-      h('div', { class: `info ${m.delivery_status === 'failed' ? 'failed' : ''}` }, [who, m.template_name ? `template ${m.template_name}` : '', time + st].filter(Boolean).join(' · '))));
+    const bubble = h('div', { class: `msg ${cls}` }, m.body,
+      h('div', { class: `info ${m.delivery_status === 'failed' ? 'failed' : ''}` }, [who, m.template_name ? `template ${m.template_name}` : '', time + st].filter(Boolean).join(' · ')));
+    // mensagem recebida: avatar do cliente ao lado
+    items.push(m.direction === 'in' && m.kind !== 'note'
+      ? h('div', { class: 'mrow' }, h('div', { class: 'avatar xs', 'aria-hidden': 'true' }, initials(customer.name)), bubble) : bubble);
   }
   const msgs = h('div', { class: 'msgs', tabindex: '0', 'aria-label': 'Mensagens' }, items);
 
-  const win = data.window;
   const banner = !win.open && c.status !== 'resolved'
     ? h('div', { class: 'banner', role: 'status' }, 'A janela de 24 h do WhatsApp está encerrada: só é possível enviar um template aprovado.') : null;
   if (!win.open && state.tab === 'text') state.tab = 'template';
 
-  thread.replaceChildren(head, msgs, banner, c.status === 'resolved'
+  thread.replaceChildren(...[head, ctlErr, msgs, banner, c.status === 'resolved'
     ? h('div', { class: 'banner', role: 'status' }, 'Conversa resolvida. Reabra para responder (notas internas continuam disponíveis).') : null,
-  composer(id, win, draft));
+  composer(id, win, draft)].filter(Boolean)); // replaceChildren transformaria null no texto "null"
   msgs.scrollTop = msgs.scrollHeight;
+  renderDetails(data, assignee);
 }
 
 function composer(id, win, draft = '') {
   const err = h('div', { class: 'err', role: 'alert' });
   const tabs = h('div', { class: 'tabs', role: 'tablist' });
-  const body = h('div');
+  const body = h('div', { class: 'composer-body' });
   const send = async (payload, btn) => {
     err.textContent = ''; if (btn) btn.disabled = true;
     try { await api('POST', `/api/conversations/${id}/messages`, payload); await openConversation(id); await refreshList(); }
     catch (e) { err.textContent = e.message; if (btn) btn.disabled = false; }
   };
   const textBox = (placeholder, kind) => {
-    const ta = h('textarea', { id: 'draft', rows: 3, placeholder, maxlength: 4096, 'aria-label': kind === 'note' ? 'Nota interna' : 'Mensagem' }); ta.value = draft;
-    const go = h('button', { class: 'btn', onclick: () => ta.value.trim() && send({ kind, body: ta.value }, go) }, kind === 'note' ? 'Salvar nota' : 'Enviar');
-    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) go.click(); });
-    return [ta, h('div', { class: 'actions' }, h('span', { class: 'help' }, 'Ctrl+Enter envia'), go)];
+    const ta = h('textarea', { id: 'draft', rows: 1, placeholder, maxlength: 4096, 'aria-label': kind === 'note' ? 'Nota interna' : 'Mensagem' }); ta.value = draft;
+    const label = kind === 'note' ? 'Salvar nota' : 'Enviar mensagem';
+    const go = h('button', { class: 'send-btn', 'aria-label': label, title: label, onclick: () => ta.value.trim() && send({ kind, body: ta.value }, go) }, icon('send'));
+    const grow = () => { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`; };
+    ta.addEventListener('input', grow);
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); go.click(); } });
+    requestAnimationFrame(grow);
+    return [h('div', { class: `sendbar ${kind === 'note' ? 'note' : ''}` }, ta, go), h('span', { class: 'help' }, 'Enter envia · Shift+Enter quebra a linha')];
   };
   const tplBox = () => {
     const tpls = state.templates.filter((t) => t.active);
@@ -448,7 +646,7 @@ function composer(id, win, draft = '') {
       h('button', { class: state.tab === k ? 'on' : '', role: 'tab', 'aria-selected': state.tab === k ? 'true' : 'false', onclick: () => { state.tab = k; draw(); } }, l)));
     const content = state.tab === 'note' ? textBox('Nota visível só para a equipe (não é enviada ao cliente)', 'note')
       : state.tab === 'template' ? tplBox()
-        : win.open ? textBox('Escreva sua resposta', 'text') : [h('div', { class: 'muted' }, 'Janela de 24 h encerrada. Use a aba Template.')];
+        : win.open ? textBox('Escreva uma mensagem…', 'text') : [h('div', { class: 'muted' }, 'Janela de 24 h encerrada. Use a aba Template.')];
     body.replaceChildren(...content);
   };
   draw();
@@ -532,7 +730,7 @@ async function metricsView(main) {
     const bars = (rows, k, v) => { const max = Math.max(1, ...rows.map((r) => r[v])); return h('div', { class: 'bars' }, rows.map((r) => h('div', { class: 'bar' },
       h('span', {}, r[k]), (() => { const i = h('i'); i.style.width = `${(r[v] / max) * 100}%`; return h('div', {}, i); })(), h('span', {}, String(r[v]))))); };
     out.replaceChildren(
-      h('div', { class: 'cards' }, card('Conversas', m.total), card('Abertas', m.byStatus.open), card('Em andamento', m.byStatus.in_progress), card('Resolvidas', m.byStatus.resolved),
+      h('div', { class: 'cards' }, card('Conversas', m.total), card('Aguardando', m.byStatus.open), card('Em atendimento', m.byStatus.in_progress), card('Resolvidas', m.byStatus.resolved),
         card('1ª resposta (média)', fmtDur(m.firstResponse.avgSeconds)), card('1ª resposta (mediana)', fmtDur(m.firstResponse.medianSeconds)),
         card('Resolução (média)', fmtDur(m.resolution.avgSeconds))),
       h('div', { class: 'section' }, h('h3', {}, 'Conversas por dia'), m.perDay.length ? bars(m.perDay, 'day', 'count') : empty('Sem dados no período')),

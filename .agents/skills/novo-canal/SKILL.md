@@ -1,6 +1,6 @@
 ---
 name: novo-canal
-description: Adiciona um novo canal de atendimento ao Cordial (e-mail, Instagram, Telegram, chat do site) implementando a interface Channel e um parser de webhook, sem mexer na inbox. Use quando o pedido for "integrar canal X" ou "receber mensagens de X".
+description: Adiciona um novo canal de atendimento ao Inside Chat (e-mail, Instagram, Telegram, chat do site) implementando a interface Channel e um parser de webhook, sem mexer na inbox. Use quando o pedido for "integrar canal X" ou "receber mensagens de X".
 ---
 
 # Novo canal
