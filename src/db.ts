@@ -95,7 +95,7 @@ const MIGRATIONS: string[] = [
 export function openDb(path: string): Db {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA secure_delete = ON;');
   const current = (db.prepare('PRAGMA user_version').get() as Row).user_version as number;
   for (let v = current; v < MIGRATIONS.length; v++) {
     db.exec('BEGIN');

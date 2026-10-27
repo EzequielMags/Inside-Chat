@@ -27,11 +27,9 @@ npm run typecheck   # tsc
 
 ## Conectar ao WhatsApp real
 
-1. Crie o app na Meta (WhatsApp Business Platform), um número dedicado e um token permanente (usuário do sistema).
-2. No `.env`: `WA_MODE=cloud`, `WA_ACCESS_TOKEN`, `WA_PHONE_NUMBER_ID`, `WA_APP_SECRET`, `WA_VERIFY_TOKEN`.
-3. Exponha o app em **HTTPS** público e configure o webhook da Meta em `https://SEU-DOMINIO/webhooks/whatsapp`
-   com o mesmo `WA_VERIFY_TOKEN`; assine o campo `messages`.
-4. Cadastre em *Administração → Templates* os templates **já aprovados** (nome/idioma idênticos aos da Meta).
+Passo a passo no painel da Meta e checklist de teste ponta a ponta: [`docs/WHATSAPP-REAL.md`](docs/WHATSAPP-REAL.md).
+Resumo: `WA_MODE=cloud` + `WA_ACCESS_TOKEN`, `WA_PHONE_NUMBER_ID`, `WA_APP_SECRET`, `WA_VERIFY_TOKEN`; webhook HTTPS em
+`/webhooks/whatsapp` assinando `messages`; templates aprovados cadastrados em *Administração → Templates*.
 
 ## Estrutura
 
@@ -51,9 +49,14 @@ Veja a tabela em `docs/PLANO.md`. As principais: um número de WhatsApp; perfis 
 da sua equipe ou sem dono; nova mensagem após "resolvida" abre nova conversa; plantão = conversa com mensagem do cliente
 recebida num sábado/domingo no fuso `America/Sao_Paulo`; mídia fora do MVP.
 
-## Antes de produção
+## Produção
 
-- Rodar atrás de HTTPS (`NODE_ENV=production` ativa cookie `Secure` e HSTS) e proxy confiável.
-- Backup do arquivo `data/*.db` (+ `-wal`), disco criptografado, definir prazo de retenção (LGPD).
-- Trocar a senha do admin inicial; o limitador de login é em memória (1 instância).
-- Para mais de uma instância ou alto volume: migrar para Postgres e SSE via pub/sub.
+Guia completo (proxy, `TRUST_PROXY`, backup, retenção LGPD, checklist): [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
+```powershell
+npm run backup                   # cópia consistente do banco (agende)
+npm run retention                # simulação da retenção (RETENTION_DAYS); "-- --apply" apaga
+```
+
+Com `NODE_ENV=production` o app recusa subir sem `PUBLIC_URL` https, `WA_MODE=cloud` e token de verificação forte.
+O limitador de login é em memória (1 instância); para mais de uma: Postgres e SSE via pub/sub.

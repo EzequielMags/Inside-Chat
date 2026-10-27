@@ -20,3 +20,9 @@ export interface StatusUpdate {
   status: 'sent' | 'delivered' | 'read' | 'failed';
   error?: string;
 }
+
+/** Erro de envio já traduzido: mensagem curta, em pt-BR, segura para gravar e exibir (sem resposta crua do provedor). */
+export class ChannelError extends Error {
+  readonly code?: number;
+  constructor(message: string, code?: number) { super(message); this.code = code; }
+}

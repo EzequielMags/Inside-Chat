@@ -2,7 +2,7 @@ import type { Db, Row } from './db.ts';
 import { tx, audit } from './db.ts';
 import { config } from './config.ts';
 import { emit } from './events.ts';
-import type { Channel, InboundMessage, StatusUpdate } from './channels/types.ts';
+import { ChannelError, type Channel, type InboundMessage, type StatusUpdate } from './channels/types.ts';
 import type { SessionUser } from './auth.ts';
 
 export class HttpError extends Error {
@@ -130,6 +130,11 @@ export interface SendInput {
   params?: string[];
 }
 
+/** Só mensagens já traduzidas (ChannelError) chegam ao histórico; qualquer outro erro vira texto genérico. */
+function sendErrorText(e: unknown): string {
+  return e instanceof ChannelError ? e.message : 'Falha ao enviar a mensagem.';
+}
+
 export async function sendMessage(db: Db, channel: Channel, user: SessionUser, conversationId: number, input: SendInput): Promise<Row> {
   const conv = getConversationFor(db, user, conversationId);
   const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(conv.customer_id) as Row;
@@ -162,7 +167,7 @@ export async function sendMessage(db: Db, channel: Channel, user: SessionUser, c
       throw new HttpError(409, 'Janela de 24 h encerrada: envie um template aprovado.', 'window_closed');
     }
     try { externalId = (await channel.sendText(customer.phone, body)).externalId; }
-    catch (e) { error = (e as Error).message; }
+    catch (e) { error = sendErrorText(e); }
   } else {
     const tpl = db.prepare('SELECT * FROM templates WHERE id = ? AND active = 1').get(input.templateId ?? -1) as Row | undefined;
     if (!tpl) throw new HttpError(400, 'Template não encontrado');
@@ -172,7 +177,7 @@ export async function sendMessage(db: Db, channel: Channel, user: SessionUser, c
     body = renderTemplate(tpl.body, params);
     templateName = tpl.name;
     try { externalId = (await channel.sendTemplate(customer.phone, { name: tpl.name, language: tpl.language }, params)).externalId; }
-    catch (e) { error = (e as Error).message; }
+    catch (e) { error = sendErrorText(e); }
   }
 
   const row = tx(db, () => {

@@ -17,6 +17,9 @@ O Integgri é usado apenas como referência conceitual do tipo de produto; nome,
 | Mídia (imagem/áudio/doc) | Fora do MVP: recebe placeholder `[imagem]` etc. | Etapa pós-MVP (download via media API) |
 | Tempo real | SSE (Server-Sent Events) em vez de WebSocket | Suficiente para 1 via; simples e sem dependência |
 | Conformidade | LGPD: minimização, log de auditoria, política de retenção documentada | Definir prazo de retenção com o jurídico |
+| Retenção | `RETENTION_DAYS=0` (desligado) até o jurídico definir o prazo. Ao ligar: apaga conversas **resolvidas** há mais de N dias, suas mensagens e clientes que ficaram sem conversa (`npm run retention`, simulação por padrão) | Prazo e escopo (auditoria, backups) a confirmar |
+| Backup | `VACUUM INTO` diário (`npm run backup`), cópia externa e disco criptografado; `BACKUP_KEEP` deve caber no prazo de retenção | RPO de 24 h; mais frequência = agendar mais vezes |
+| Erros de envio | Texto curto em pt-BR por código da Graph API; resposta crua da Meta nunca é gravada | Código novo = nova entrada em `GRAPH_ERRORS` |
 
 ## 2. Arquitetura e stack
 

@@ -38,7 +38,9 @@ export async function buildApp({ db, channel, logger = false }: AppDeps) {
     throw new Error('WA_MODE=cloud exige WA_APP_SECRET, WA_VERIFY_TOKEN, WA_ACCESS_TOKEN e WA_PHONE_NUMBER_ID');
   }
 
-  const app = Fastify({ logger: logger ? { redact: ['req.headers.cookie', 'req.headers.authorization'] } : false, bodyLimit: 1_000_000 });
+  const app = Fastify({ logger: logger ? { redact: ['req.headers.cookie', 'req.headers.authorization'] } : false, bodyLimit: 1_000_000,
+    // Nº de proxies à frente: o Fastify com `number` não confia em ninguém, então os saltos são contados aqui.
+    trustProxy: config.trustProxy > 0 ? (_addr: string, hop: number) => hop < config.trustProxy : false });
   await app.register(fastifyCookie);
   const limiter = new LoginLimiter();
 
@@ -378,6 +380,12 @@ export async function buildApp({ db, channel, logger = false }: AppDeps) {
     ).all();
   });
 
+  // ---------- saúde (proxy / monitoramento; sem dados) ----------
+  app.get('/healthz', async (_req, reply) => {
+    try { db.prepare('SELECT 1').get(); } catch { return reply.status(503).send({ ok: false }); }
+    return { ok: true };
+  });
+
   // ---------- webhook WhatsApp ----------
   app.get('/webhooks/whatsapp', async (req, reply) => {
     const q = req.query as Record<string, string>;
@@ -396,11 +404,16 @@ export async function buildApp({ db, channel, logger = false }: AppDeps) {
       }
     }
     const { messages, statuses } = parseWebhook(req.body);
+    // Processa o lote inteiro; se algum item falhar (ex.: banco ocupado) responde 500 para a Meta reenviar.
+    // Reentrega é segura: ingestão e status são idempotentes (external_id, sem regressão de status).
+    let failed = false;
     for (const m of messages) {
-      try { ingestInbound(db, m); } catch (e) { app.log.error(e); }
+      try { ingestInbound(db, m); } catch (e) { failed = true; app.log.error(e); }
     }
-    for (const s of statuses) applyStatus(db, s);
-    return reply.status(200).send({ ok: true }); // a Meta reenvia em caso de erro; responda sempre 200 após validar
+    for (const s of statuses) {
+      try { applyStatus(db, s); } catch (e) { failed = true; app.log.error(e); }
+    }
+    return reply.status(failed ? 500 : 200).send({ ok: !failed });
   });
 
   // ---------- simulador (apenas modo mock) ----------
