@@ -1,6 +1,6 @@
 ---
 name: permissao
-description: Regras de controle de acesso do Cordial (perfis admin/agent, equipes, quem vê e altera cada conversa). Use ao criar perfil novo (ex. supervisor), mudar visibilidade de conversas, filtros, indicadores ou qualquer rota que exponha dados de clientes.
+description: Regras de controle de acesso do Inside Chat (perfis admin/agent, equipes, quem vê e altera cada conversa). Use ao criar perfil novo (ex. supervisor), mudar visibilidade de conversas, filtros, indicadores ou qualquer rota que exponha dados de clientes.
 ---
 
 # Permissões

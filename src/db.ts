@@ -90,6 +90,52 @@ const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   );
   `,
+  `
+  -- v2: cadastro com aprovação do administrador (e-mail com link de uso único)
+  ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'approved' CHECK (status IN ('pending','approved','rejected'));
+  CREATE TABLE signup_approvals (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,   -- sha256 do token enviado por e-mail
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX idx_signup_user ON signup_approvals(user_id);
+  `,
+  `
+  -- v3: o solicitante confirma a posse do e-mail antes de o pedido chegar ao aprovador
+  ALTER TABLE users ADD COLUMN email_verified_at TEXT;
+  ALTER TABLE signup_approvals ADD COLUMN kind TEXT NOT NULL DEFAULT 'approval' CHECK (kind IN ('verify','approval'));
+  `,
+  `
+  -- v4: eventos do sistema na conversa (messages.kind = 'event', nunca enviados pelo Channel) e respostas rápidas.
+  -- O SQLite não altera CHECK: a tabela é recriada com o mesmo formato mais o novo kind.
+  CREATE TABLE messages_new (
+    id INTEGER PRIMARY KEY,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    direction TEXT NOT NULL CHECK (direction IN ('in','out')),
+    kind TEXT NOT NULL CHECK (kind IN ('text','template','note','event')),
+    body TEXT NOT NULL,
+    template_name TEXT,
+    sender_user_id INTEGER REFERENCES users(id),
+    external_id TEXT UNIQUE,
+    delivery_status TEXT,
+    error TEXT,
+    local_dow INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  INSERT INTO messages_new SELECT id, conversation_id, direction, kind, body, template_name, sender_user_id, external_id, delivery_status, error, local_dow, created_at FROM messages;
+  DROP TABLE messages;
+  ALTER TABLE messages_new RENAME TO messages;
+  CREATE INDEX idx_msg_conv ON messages(conversation_id, id);
+  CREATE TABLE quick_replies (
+    id INTEGER PRIMARY KEY,
+    shortcut TEXT NOT NULL UNIQUE,      -- sem a barra, minúsculas (ex.: bomdia)
+    body TEXT NOT NULL,
+    team_id INTEGER REFERENCES teams(id) ON DELETE CASCADE   -- NULL = todos; senão, só a equipe
+  );
+  `,
 ];
 
 export function openDb(path: string): Db {

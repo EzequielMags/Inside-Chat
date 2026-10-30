@@ -1,0 +1,12 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="220" height="180" viewBox="0 0 220 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Ilustra&#195;&#167;&#195;&#163;o">
+<path id="Bal&#195;&#163;o cinza" d="M36 20.75H134C142.422 20.75 149.25 27.5777 149.25 36V88C149.25 96.4223 142.422 103.25 134 103.25H36C27.5777 103.25 20.75 96.4223 20.75 88V36C20.75 27.5777 27.5777 20.75 36 20.75Z" fill="#1F1C19" stroke-width="1.5" stroke="#766C61"/>
+<rect id="Linha 1" x="38" y="38" width="70" height="8" rx="4" fill="#FF9A4D"/>
+<rect id="Linha 2" x="38" y="56" width="96" height="8" rx="4" fill="#766C61"/>
+<rect id="Linha 3" x="38" y="74" width="54" height="8" rx="4" fill="#766C61"/>
+<rect id="Bal&#195;&#163;o laranja" x="80" y="84" width="120" height="72" rx="16" fill="#FF7A1A"/>
+<circle id="Ponto" cx="118" cy="120" r="7" fill="#1A0D02"/>
+<circle id="Ponto_2" cx="140" cy="120" r="7" fill="#1A0D02"/>
+<circle id="Ponto_3" cx="162" cy="120" r="7" fill="#1A0D02"/>
+</g>
+</svg>

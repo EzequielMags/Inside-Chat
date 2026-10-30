@@ -1,6 +1,6 @@
 # Conectar o WhatsApp Cloud API real
 
-Passos no painel da Meta (manuais; o Cordial não faz por você). Referência: https://developers.facebook.com/docs/whatsapp/cloud-api
+Passos no painel da Meta (manuais; o Inside Chat não faz por você). Referência: https://developers.facebook.com/docs/whatsapp/cloud-api
 
 1. **Conta**: Meta Business verificada e um app do tipo *Business* com o produto **WhatsApp**.
 2. **Número**: dedicado e **fora** do app WhatsApp comum. Anote o **Phone number ID** (`WA_PHONE_NUMBER_ID`).

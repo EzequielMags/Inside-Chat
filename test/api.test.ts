@@ -146,3 +146,67 @@ test('indicadores: contagem e tempo de primeira resposta', async () => {
   assert.ok(m.firstResponse.samples >= 1);
   assert.ok(Array.isArray(m.perDay) && m.perDay.length >= 1);
 });
+
+test('ACEITAR: atômico (409 para o segundo), 404 fora da equipe, exige sessão e CSRF', async () => {
+  const { conversationId: id } = ingestInbound(db, { channel: 'whatsapp', phone: '5511900000077', body: 'oi', externalId: 'acc1' });
+  assert.equal((await call('admin@t.com', 'PATCH', `/api/conversations/${id}`, { teamId: 1 })).statusCode, 200); // equipe A (Ana)
+  assert.equal((await app.inject({ method: 'POST', url: `/api/conversations/${id}/accept`, headers: H })).statusCode, 401);
+  assert.equal((await app.inject({ method: 'POST', url: `/api/conversations/${id}/accept`, headers: { cookie: cookies['ana@t.com'] } })).statusCode, 403); // sem CSRF
+  assert.equal((await call('bia@t.com', 'POST', `/api/conversations/${id}/accept`)).statusCode, 404);            // outra equipe não vê
+  const ok = await call('ana@t.com', 'POST', `/api/conversations/${id}/accept`);
+  assert.equal(ok.statusCode, 200);
+  assert.equal(ok.json().status, 'in_progress'); assert.equal(ok.json().assignee_id, 2);
+  const again = await call('admin@t.com', 'POST', `/api/conversations/${id}/accept`);                             // já tem dono
+  assert.equal(again.statusCode, 409); assert.equal(again.json().code, 'already_taken');
+  assert.equal((db.prepare('SELECT assignee_id a FROM conversations WHERE id = ?').get(id) as any).a, 2);        // dono não foi sobrescrito
+  assert.ok(db.prepare("SELECT 1 FROM audit_log WHERE action = 'conversation.accept' AND entity_id = ?").get(id));
+  assert.equal((await call('ana@t.com', 'POST', '/api/conversations/99999/accept')).statusCode, 404);
+});
+
+test('eventos do sistema: registrados na conversa, nunca passam pelo canal nem mudam a prévia', async () => {
+  const { conversationId: id } = ingestInbound(db, { channel: 'whatsapp', phone: '5511900000088', body: 'preciso de ajuda', externalId: 'ev1' });
+  const sentBefore = channel.sent.length;
+  assert.equal((await call('ana@t.com', 'POST', `/api/conversations/${id}/accept`)).statusCode, 200);
+  assert.equal((await call('ana@t.com', 'PATCH', `/api/conversations/${id}`, { assigneeId: 1 })).statusCode, 200);
+  assert.equal((await call('admin@t.com', 'PATCH', `/api/conversations/${id}`, { status: 'resolved' })).statusCode, 200);
+  assert.equal((await call('admin@t.com', 'PATCH', `/api/conversations/${id}`, { status: 'in_progress' })).statusCode, 200);
+  const events = (await call('admin@t.com', 'GET', `/api/conversations/${id}`)).json().messages.filter((m: any) => m.kind === 'event').map((m: any) => m.body);
+  assert.deepEqual(events, ['Atendimento atribuído a Ana', 'Atendimento atribuído a Admin', 'Admin resolveu a conversa', 'Admin reabriu a conversa']);
+  assert.equal(channel.sent.length, sentBefore);
+  assert.equal((db.prepare('SELECT last_preview p FROM conversations WHERE id = ?').get(id) as any).p, 'preciso de ajuda');
+});
+
+test('busca dentro da conversa: acha texto, ignora eventos, respeita permissão e valida entrada', async () => {
+  const { conversationId: id } = ingestInbound(db, { channel: 'whatsapp', phone: '5511900000099', body: 'Quero a segunda via do boleto', externalId: 'sr1' });
+  await call('admin@t.com', 'PATCH', `/api/conversations/${id}`, { teamId: 1 });
+  const hit = await call('ana@t.com', 'GET', `/api/conversations/${id}/search?q=BOLETO`);
+  assert.equal(hit.statusCode, 200); assert.equal(hit.json().ids.length, 1);
+  assert.deepEqual((await call('ana@t.com', 'GET', `/api/conversations/${id}/search?q=xyz`)).json().ids, []);
+  assert.deepEqual((await call('ana@t.com', 'GET', `/api/conversations/${id}/search?q=${encodeURIComponent('%')}`)).json().ids, []); // % é literal
+  assert.deepEqual((await call('ana@t.com', 'GET', `/api/conversations/${id}/search?q=atribuído`)).json().ids, []);                    // evento não entra
+  assert.equal((await call('bia@t.com', 'GET', `/api/conversations/${id}/search?q=boleto`)).statusCode, 404);                       // outra equipe
+  assert.equal((await call('ana@t.com', 'GET', `/api/conversations/${id}/search`)).statusCode, 400);
+});
+
+test('respostas rápidas: só admin cadastra; atendente vê as gerais e as da sua equipe', async () => {
+  const mk = (p: object) => call('admin@t.com', 'POST', '/api/quick-replies', p);
+  assert.equal((await call('ana@t.com', 'POST', '/api/quick-replies', { shortcut: 'oi', body: 'Olá!' })).statusCode, 403);
+  assert.equal((await mk({ shortcut: 'Bom_Dia', body: 'Bom dia! Como posso ajudar?' })).statusCode, 201);
+  assert.equal((await mk({ shortcut: 'so_a', body: 'Só equipe A', teamId: 1 })).statusCode, 201);
+  assert.equal((await mk({ shortcut: 'so_b', body: 'Só equipe B', teamId: 2 })).statusCode, 201);
+  assert.equal((await mk({ shortcut: 'bom_dia', body: 'repetido' })).statusCode, 409);
+  assert.equal((await mk({ shortcut: 'com espaço', body: 'x' })).statusCode, 400);
+  assert.equal((await mk({ shortcut: 'x', body: 'x', teamId: 999 })).statusCode, 400);
+  const names = async (u: string) => (await call(u, 'GET', '/api/quick-replies')).json().map((r: any) => r.shortcut);
+  assert.deepEqual(await names('ana@t.com'), ['bom_dia', 'so_a']);
+  assert.deepEqual(await names('bia@t.com'), ['bom_dia', 'so_b']);
+  assert.deepEqual(await names('admin@t.com'), ['bom_dia', 'so_a', 'so_b']);
+});
+
+test('nova conversa: não revela atendimento aberto de outra equipe', async () => {
+  const { conversationId: id } = ingestInbound(db, { channel: 'whatsapp', phone: '5511900000055', body: 'oi', externalId: 'nc1' });
+  await call('admin@t.com', 'PATCH', `/api/conversations/${id}`, { teamId: 2 }); // equipe B (Bia)
+  const r = await call('ana@t.com', 'POST', '/api/conversations', { phone: '5511900000055' });
+  assert.equal(r.statusCode, 409); assert.equal(r.json().code, 'already_open');
+  assert.equal((await call('bia@t.com', 'POST', '/api/conversations', { phone: '5511900000055' })).json().id, id);
+});
