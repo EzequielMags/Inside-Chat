@@ -29,6 +29,9 @@ O Integgri é usado apenas como referência conceitual do tipo de produto; nome,
 | Tempo real | SSE (Server-Sent Events) em vez de WebSocket | Suficiente para 1 via; simples e sem dependência |
 | Cadastro de usuários | Autoatendimento com aprovação: conta nasce `pending`/inativa, sempre como `agent`; o aprovador (e-mail em `APPROVAL_EMAIL`, tipicamente o Gmail do admin) recebe link de uso único, 72 h, **só depois de o solicitante confirmar a posse do e-mail dele** (link próprio, onde ele também **define a senha**, evitando pré-sequestro de conta). Cadastro recusado bloqueia o e-mail até o admin **reabrir** pelo painel (volta a pendente, sem dar acesso; solicitante avisado por e-mail). Link de aprovação expirado pode ser reemitido pela página pública, mas o novo link vai sempre e só ao `APPROVAL_EMAIL` (teto de 5 e-mails de aprovação por cadastro; depois disso, só pelo painel). Posse do e-mail do admin = autorização. Painel de admin como alternativa | Dependência nova: `nodemailer`. Troca para OAuth/Gmail API se não quiser senha de app |
 | Conformidade | LGPD: minimização, log de auditoria, política de retenção documentada | Definir prazo de retenção com o jurídico |
+| Retenção | `RETENTION_DAYS=0` (desligado) até o jurídico definir o prazo. Ao ligar: apaga conversas **resolvidas** há mais de N dias, suas mensagens e clientes que ficaram sem conversa (`npm run retention`, simulação por padrão) | Prazo e escopo (auditoria, backups) a confirmar |
+| Backup | `VACUUM INTO` diário (`npm run backup`), cópia externa e disco criptografado; `BACKUP_KEEP` deve caber no prazo de retenção | RPO de 24 h; mais frequência = agendar mais vezes |
+| Erros de envio | Texto curto em pt-BR por código da Graph API; resposta crua da Meta nunca é gravada | Código novo = nova entrada em `GRAPH_ERRORS` |
 
 ## 2. Arquitetura e stack
 

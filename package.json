@@ -11,7 +11,9 @@
     "dev": "node --watch src/server.ts",
     "seed:demo": "node src/seed-demo.ts",
     "test": "node --test \"test/*.test.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "backup": "node scripts/backup.ts",
+    "retention": "node scripts/retention.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.1",

@@ -506,6 +506,12 @@ export async function buildApp({ db, channel, mailer = makeMailer(config), logge
     ).all();
   });
 
+  // ---------- saúde (proxy / monitoramento; sem dados) ----------
+  app.get('/healthz', async (_req, reply) => {
+    try { db.prepare('SELECT 1').get(); } catch { return reply.status(503).send({ ok: false }); }
+    return { ok: true };
+  });
+
   // ---------- webhook WhatsApp ----------
   app.get('/webhooks/whatsapp', async (req, reply) => {
     const q = req.query as Record<string, string>;
@@ -524,11 +530,16 @@ export async function buildApp({ db, channel, mailer = makeMailer(config), logge
       }
     }
     const { messages, statuses } = parseWebhook(req.body);
+    // Processa o lote inteiro; se algum item falhar (ex.: banco ocupado) responde 500 para a Meta reenviar.
+    // Reentrega é segura: ingestão e status são idempotentes (external_id, sem regressão de status).
+    let failed = false;
     for (const m of messages) {
-      try { ingestInbound(db, m); } catch (e) { app.log.error(e); }
+      try { ingestInbound(db, m); } catch (e) { failed = true; app.log.error(e); }
     }
-    for (const s of statuses) applyStatus(db, s);
-    return reply.status(200).send({ ok: true }); // a Meta reenvia em caso de erro; responda sempre 200 após validar
+    for (const s of statuses) {
+      try { applyStatus(db, s); } catch (e) { failed = true; app.log.error(e); }
+    }
+    return reply.status(failed ? 500 : 200).send({ ok: !failed });
   });
 
   // ---------- simulador (apenas modo mock) ----------
